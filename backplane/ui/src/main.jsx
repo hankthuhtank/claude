@@ -36,7 +36,8 @@ function Rail() {
   const practice = useStore((s) => s.practice);
   const current = route.name === "project" ? "home" : route.name;
   const w = worst(boot?.projects);
-  const conns = boot?.connections || [];
+  // Practice connections only count while the sandbox runs; otherwise they are off, not "connected".
+  const conns = (boot?.connections || []).filter((c) => !c.practice || practice);
   const connWorst = conns.some((c) => c.status === "fail") ? "fail" : conns.some((c) => c.status === "warn") ? "warn" : conns.length ? "ok" : "unknown";
   return (
     <nav class="rail" aria-label="Main">

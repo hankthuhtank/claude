@@ -39,6 +39,14 @@ func (a *App) Plan(ctx context.Context, p PlanParams) (*core.Plan, error) {
 	if id := a.runningRun(pr.ID, env); id != "" {
 		return nil, fmt.Errorf("a build is already running in %s — wait for it or cancel it first", env)
 	}
+	if pr.Practice && !p.Offline && !a.practiceRunning() {
+		if _, err := a.StartPractice(ctx); err != nil {
+			return nil, err
+		}
+		if pr, err = a.project(pr.ID); err != nil {
+			return nil, err
+		}
+	}
 	plan, err := a.Engine.Plan(ctx, pr, env, engine.PlanOptions{Offline: p.Offline, Teardown: p.Teardown})
 	if err != nil {
 		return nil, err
@@ -140,7 +148,11 @@ func (a *App) afterRun(pr *core.Project, env, runID string) {
 					kind = core.CheckQuick
 				}
 				if cur, err := a.project(pr.ID); err == nil {
-					_, _ = a.Engine.Check(context.Background(), cur, env, engine.CheckOptions{Kind: kind, Trigger: "after-build"})
+					// Record it with the monitor too, so the schedule counts
+					// from this check instead of starting another one.
+					if rep, err := a.Engine.Check(context.Background(), cur, env, engine.CheckOptions{Kind: kind, Trigger: "after-build"}); err == nil {
+						a.monitor.observe(cur, env, rep)
+					}
 				}
 			}
 		case core.RunFailed:
@@ -272,6 +284,9 @@ func (a *App) Check(ctx context.Context, p CheckParams) (*CheckStarted, error) {
 	env, err := a.envOf(pr, p.Env)
 	if err != nil {
 		return nil, err
+	}
+	if pr.Practice && !a.practiceRunning() {
+		return nil, fmt.Errorf("practice mode is off — start it to check practice backends")
 	}
 	if a.Engine.CheckRunning(pr.ID, env) {
 		return nil, fmt.Errorf("a health check is already running for %s", env)

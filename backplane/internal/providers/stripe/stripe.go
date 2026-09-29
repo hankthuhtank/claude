@@ -337,14 +337,30 @@ type CheckoutSession struct {
 // CreateCheckoutSession creates a hosted Checkout Session. Creating and then
 // expiring a session never charges anything, in test or live mode.
 func CreateCheckoutSession(ctx context.Context, c *providers.Conn, price, successURL string, meta map[string]string, idem string) (*CheckoutSession, error) {
+	return CreateCheckoutSessionMode(ctx, c, price, "payment", successURL, meta, idem)
+}
+
+// CreateCheckoutSessionMode is CreateCheckoutSession for a given mode
+// ("payment" for one-time prices, "subscription" for recurring ones).
+func CreateCheckoutSessionMode(ctx context.Context, c *providers.Conn, price, mode, successURL string, meta map[string]string, idem string) (*CheckoutSession, error) {
 	var cs CheckoutSession
+	if mode == "" {
+		mode = "payment"
+	}
 	params := map[string]any{
-		"mode":        "payment",
+		"mode":        mode,
 		"line_items":  []map[string]any{{"price": price, "quantity": 1}},
 		"success_url": successURL,
 		"metadata":    meta,
 	}
 	err := Call(ctx, c, "POST", "/v1/checkout/sessions", params, idem, &cs)
+	return &cs, err
+}
+
+// GetCheckoutSession reads a session (amount, status, metadata).
+func GetCheckoutSession(ctx context.Context, c *providers.Conn, id string) (*CheckoutSession, error) {
+	var cs CheckoutSession
+	err := Call(ctx, c, "GET", "/v1/checkout/sessions/"+id, nil, "", &cs)
 	return &cs, err
 }
 

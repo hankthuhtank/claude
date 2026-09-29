@@ -18,6 +18,7 @@ const (
 	HealthWarn    Health = "warn"    // yellow: works, but needs attention
 	HealthFail    Health = "fail"    // red: broken
 	HealthSkipped Health = "skipped" // intentionally not run (e.g. live-mode payment test)
+	HealthOff     Health = "off"     // switched off on purpose (practice connections while the sandbox is stopped)
 )
 
 // Rank orders health from best to worst so aggregation can take the worst.
@@ -25,7 +26,7 @@ func (h Health) Rank() int {
 	switch h {
 	case HealthOK:
 		return 1
-	case HealthSkipped:
+	case HealthSkipped, HealthOff:
 		return 0
 	case HealthUnknown:
 		return 2

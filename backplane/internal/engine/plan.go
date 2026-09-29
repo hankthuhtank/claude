@@ -38,7 +38,7 @@ func (e *Engine) Plan(ctx context.Context, p *core.Project, env string, opts Pla
 	if err != nil {
 		return nil, err
 	}
-	plan := &core.Plan{ID: NewID("plan"), Project: p.ID, Environment: env, CreatedAt: e.Now().UTC(), Production: core.IsProduction(env), Counts: map[string]int{},
+	plan := &core.Plan{ID: NewID("plan"), Project: p.ID, Environment: env, CreatedAt: e.Now().UTC(), Production: core.IsProduction(env) && !p.Practice, Practice: p.Practice, Counts: map[string]int{},
 		Purpose: opts.Purpose, Repair: len(opts.Repair) > 0}
 	targets := map[string]RepairTarget{}
 	for _, t := range opts.Repair {
@@ -281,7 +281,7 @@ func (e *Engine) Plan(ctx context.Context, p *core.Project, env string, opts Pla
 			plan.Connections = append(plan.Connections, core.PlanLink{From: from.Label, To: to.Label, Label: l.Label})
 		}
 	}
-	plan.Costs = EstimateCosts(bp)
+	plan.Costs = EstimateCostsFor(p)
 	return plan, nil
 }
 

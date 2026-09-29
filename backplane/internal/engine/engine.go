@@ -179,6 +179,12 @@ func (e *Engine) OpenConn(c core.Connection, logCtx core.LogEntry) (*providers.C
 	}
 	opts := providers.ConnectOptions{Log: e.httpLogger(logCtx), Practice: c.Practice}
 	if c.Practice {
+		// Practice credentials only ever go to the simulator. With the
+		// sandbox stopped there is nowhere safe to send them.
+		if len(e.PracticeBaseURLs) == 0 {
+			return nil, &core.Problem{Title: "Practice sandbox is off", Provider: c.Provider, Code: "offline",
+				Summary: "This is a practice connection. Start practice mode to use it."}
+		}
 		opts.BaseURLs = e.PracticeBaseURLs
 	}
 	return p.Connect(c, secret, opts)

@@ -76,7 +76,7 @@ export function clock(t) {
   return new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
 
-export const healthWord = { ok: "Pass", warn: "Attention", fail: "Fail", unknown: "Not tested", skipped: "Skipped" };
+export const healthWord = { ok: "Pass", warn: "Attention", fail: "Fail", unknown: "Not tested", skipped: "Skipped", off: "Off" };
 
 export function pct(v) {
   if (v == null || v < 0) return "—";

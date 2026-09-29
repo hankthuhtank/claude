@@ -13,6 +13,7 @@ const MATURITY = {
 
 export function Accounts({ add, then }) {
   const boot = useStore((s) => s.boot);
+  const practiceOn = useStore((s) => s.practice);
   const providers = useStore((s) => s.providers);
   const [adding, setAdding] = useState(add || null); // provider id or "pick"
   const [editing, setEditing] = useState(null);
@@ -37,9 +38,12 @@ export function Accounts({ add, then }) {
       )}
       {practice.length ? (
         <div style="margin-top:26px">
-          <h2 style="margin-bottom:10px">Practice connections</h2>
-          <p class="small muted" style="margin-top:-4px">Point at the built-in simulator. Created automatically by the practice sandbox.</p>
-          <div class="stack" style="gap:8px">{practice.map((c) => <ConnUnit c={c} />)}</div>
+          <div class="spread" style="margin-bottom:10px">
+            <div class="row"><h2>Practice connections</h2><Badge led={practiceOn ? "ok" : undefined}>{practiceOn ? "Practice mode on" : "Practice mode off"}</Badge></div>
+            {!practiceOn ? <Btn size="sm" icon="play" onClick={() => go("practice")}>Start practice mode</Btn> : null}
+          </div>
+          <p class="small muted" style="margin-top:-4px">{practiceOn ? "They point at the built-in simulator on this computer." : "They only work while practice mode is running, so they're switched off now."}</p>
+          <div class="stack" style={`gap:8px${practiceOn ? "" : ";opacity:.62"}`}>{practice.map((c) => <ConnUnit c={c} />)}</div>
         </div>
       ) : null}
       {adding === "pick" ? <PickProvider providers={providers} onPick={(id) => setAdding(id)} onClose={() => setAdding(null)} /> : null}
@@ -73,13 +77,13 @@ function ConnUnit({ c, onEdit }) {
           <div class="row small muted" style="margin-top:4px">
             {c.accountName ? <span>{c.accountName}</span> : null}
             <span class="mono">{c.hint}</span>
-            <span>verified {ago(c.verifiedAt)}</span>
+            {c.status === "off" ? null : <span>verified {ago(c.verifiedAt)}</span>}
             {c.usedBy?.length ? <span>used by {c.usedBy.join(", ")}</span> : <span>not used by a backend yet</span>}
           </div>
           {c.warnings?.length ? <ul class="small" style="margin:6px 0 0;padding-left:18px">{c.warnings.map((w) => <li>{w}</li>)}</ul> : null}
         </div>
         <div class="row">
-          <Btn size="sm" icon="refresh" busy={busy} onClick={verify}>Verify</Btn>
+          {c.status === "off" ? null : <Btn size="sm" icon="refresh" busy={busy} onClick={verify}>Verify</Btn>}
           {onEdit ? <Btn size="sm" icon="key" onClick={onEdit}>Replace key</Btn> : null}
           {onEdit ? <Btn size="sm" kind="ghost" icon="trash" aria-label="Remove" onClick={remove} /> : null}
         </div>

@@ -4,6 +4,9 @@
 // Checkout → verified Stripe webhook → order in Supabase → signed, expiring
 // R2 download link → email through Resend. Refunds revoke downloads.
 //
+// What's for sale lives in CATALOG (set by Backplane from the Products tab).
+// Browsers send an item key and a quantity — never a price or an amount.
+//
 // Backplane tracks this file. If you change it, Backplane marks it
 // USER MODIFIED and never overwrites it without asking.
 // Configuration lives in wrangler.jsonc (vars) and Worker secrets.
@@ -11,8 +14,10 @@
 
 const STRIPE_VERSION = "2026-08-26.dahlia";
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
-const REQUIRED = ["SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "PRICE_ID",
+const REQUIRED = ["SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "CATALOG",
   "RESEND_API_KEY", "FROM_EMAIL", "DOWNLOAD_SIGNING_SECRET", "BACKPLANE_PROBE_TOKEN", "PRODUCT_NAME"];
+// The Worker checks this many prices itself; Backplane checks every price directly.
+const HEALTH_PRICE_LIMIT = 8;
 
 export default {
   async fetch(request, env, ctx) {
@@ -22,6 +27,7 @@ export default {
       if (request.method === "OPTIONS") return preflight(env, origin);
       const path = url.pathname.replace(/\/+$/, "") || "/";
       if (path === "/") return json({ service: env.WORKER_NAME || "commerce-api", ok: true });
+      if (path === "/products" && request.method === "GET") return withCors(publicCatalog(env), env, origin);
       if (path === "/checkout" && (request.method === "POST" || request.method === "GET")) return withCors(await checkout(request, env, url), env, origin);
       if (path === "/thanks" && request.method === "GET") return await thanks(url, env);
       if (path === "/stripe/webhook" && request.method === "POST") return await stripeWebhook(request, env, ctx, url);
@@ -210,22 +216,113 @@ async function verifyStripe(payload, header, secret, toleranceSec = 300) {
   return sigs.some((s) => timingSafeEqual(s, expected));
 }
 
+// ───────────────────────── catalog ─────────────────────────
+
+// CATALOG: { currency, items: [{ key, name, billing, prices: { once|month|year: price id }, amounts: {…} }] }
+function catalog(env) {
+  try {
+    const c = JSON.parse(env.CATALOG || "");
+    if (c && Array.isArray(c.items)) return c;
+  } catch {
+    // fall through
+  }
+  // Configuration from before the catalog: a single PRICE_ID.
+  if (env.PRICE_ID) return { currency: "usd", items: [{ key: "main", name: env.PRODUCT_NAME || "Product", billing: "once", prices: { once: env.PRICE_ID }, amounts: {} }] };
+  return { currency: "usd", items: [] };
+}
+
+class OrderError extends Error {}
+
+// Reads what the customer wants from JSON, a form post or the query string:
+//   { "items": [{ "key": "candle", "quantity": 2 }], "interval": "month" }
+//   /checkout?item=candle&quantity=2
+// Anything else in the request (a price, an amount) is ignored.
+async function readOrder(request, url) {
+  let body = {};
+  if (request.method === "POST") {
+    const type = request.headers.get("Content-Type") || "";
+    if (type.includes("application/json")) body = (await request.json().catch(() => ({}))) || {};
+    else if (type.includes("form")) body = Object.fromEntries((await request.formData().catch(() => new FormData())).entries());
+  }
+  const src = { ...Object.fromEntries(url.searchParams.entries()), ...body };
+  const lines = Array.isArray(src.items) ? src.items : src.item ? [{ key: src.item, quantity: src.quantity }] : [];
+  return { lines, interval: src.interval ? String(src.interval) : "" };
+}
+
+// Maps requested items to catalog prices. Throws OrderError with a message
+// that is safe to show the customer.
+function priceLines(env, requested, interval) {
+  const cat = catalog(env);
+  if (!cat.items.length) throw new OrderError("Nothing is for sale yet.");
+  const max = Math.max(1, Number(env.MAX_QUANTITY || 1));
+  const cart = env.CART === "true";
+  const lines = requested.length ? requested : [{ key: cat.items[0].key, quantity: 1 }];
+  if (lines.length > (cart ? 20 : 1)) throw new OrderError(cart ? "Up to 20 different items per order." : "Choose one item.");
+  const merged = new Map();
+  for (const l of lines) {
+    const key = String(l?.key ?? l?.item ?? "");
+    const item = cat.items.find((i) => i.key === key);
+    if (!item) throw new OrderError(`Unknown item "${key.slice(0, 40)}".`);
+    const qty = l?.quantity === undefined || l?.quantity === null || l?.quantity === "" ? 1 : Number(l.quantity);
+    const total = (merged.get(key)?.quantity || 0) + qty;
+    if (!Number.isInteger(qty) || qty < 1 || total > max) throw new OrderError(max === 1 ? "Quantity must be 1." : `Quantity must be between 1 and ${max}.`);
+    merged.set(key, { item, quantity: total });
+  }
+  const chosen = [...merged.values()];
+  const iv = interval || chosen[0].item.billing || Object.keys(chosen[0].item.prices)[0];
+  for (const c of chosen) {
+    if (!c.item.prices?.[iv]) throw new OrderError(`"${c.item.name}" isn't sold ${iv === "once" ? "as a one-time purchase" : iv === "month" ? "monthly" : iv === "year" ? "yearly" : "that way"}.`);
+  }
+  const out = chosen.map((c) => ({ key: c.item.key, name: c.item.name, quantity: c.quantity, price: c.item.prices[iv], amount: c.item.amounts?.[iv] ?? null }));
+  const summary = out.map((l) => (l.quantity > 1 ? `${l.name} × ${l.quantity}` : l.name)).join(", ");
+  return { interval: iv, currency: cat.currency, lines: out, summary: summary.slice(0, 450), keys: out.map((l) => `${l.key}:${l.quantity}`).join(",").slice(0, 490) };
+}
+
+// Public list of what's for sale (no Stripe ids), for your site's menu or pricing table.
+function publicCatalog(env) {
+  const cat = catalog(env);
+  const items = cat.items.map((i) => ({
+    key: i.key, name: i.name, description: i.description || undefined, minutes: i.minutes || undefined, billing: i.billing,
+    prices: Object.fromEntries(Object.entries(i.amounts || {}).map(([iv, a]) => [iv, { amount: a, display: money(a, cat.currency) }])),
+  }));
+  return json({ currency: cat.currency, items, cart: env.CART === "true", max_quantity: Math.max(1, Number(env.MAX_QUANTITY || 1)) }, 200, { "cache-control": "public, max-age=60" });
+}
+
+// The item lines recorded on a paid session ("candle:2,soap:1").
+function linesFromMeta(env, meta) {
+  const cat = catalog(env);
+  return String(meta?.item_keys || "").split(",").filter(Boolean).map((part) => {
+    const [key, q] = part.split(":");
+    const item = cat.items.find((i) => i.key === key);
+    return { key, name: item?.name || key, quantity: Number(q) || 1 };
+  });
+}
+
 async function checkout(request, env, url) {
   const probe = request.headers.get("X-Backplane-Probe");
   const isProbe = Boolean(probe) && timingSafeEqual(probe, env.BACKPLANE_PROBE_TOKEN || "");
   const base = `${url.protocol}//${url.host}`;
   const shipping = env.FULFILLMENT_MODE === "shipping";
+  let order;
+  try {
+    const req = await readOrder(request, url);
+    order = priceLines(env, req.lines, req.interval);
+  } catch (e) {
+    if (e instanceof OrderError) return json({ error: e.message }, 400);
+    throw e;
+  }
+  const subscription = order.interval !== "once";
   const session = await stripe(env, "POST", "/v1/checkout/sessions", {
-    mode: "payment",
-    line_items: [{ price: env.PRICE_ID, quantity: 1 }],
+    mode: subscription ? "subscription" : "payment",
+    line_items: order.lines.map((l) => ({ price: l.price, quantity: l.quantity })),
     // Physical goods: Stripe collects and validates the delivery address.
     shipping_address_collection: shipping ? { allowed_countries: shipCountries(env) } : undefined,
     phone_number_collection: shipping ? { enabled: true } : undefined,
     success_url: (env.SUCCESS_URL || `${base}/thanks`) + (String(env.SUCCESS_URL || "").includes("?") ? "&" : "?") + "session_id={CHECKOUT_SESSION_ID}",
     cancel_url: env.CANCEL_URL || env.SITE_URL || base,
-    customer_creation: "always",
+    customer_creation: subscription ? undefined : "always",
     allow_promotion_codes: env.ALLOW_PROMO_CODES === "true" ? true : undefined,
-    metadata: { product: env.PRODUCT_NAME, ...(isProbe ? { backplane_probe: "1" } : {}) },
+    metadata: { product: order.summary, items: order.summary, item_keys: order.keys, interval: order.interval, ...(isProbe ? { backplane_probe: "1" } : {}) },
   });
   const wantsJson = (request.headers.get("Accept") || "").includes("application/json") || isProbe;
   if (wantsJson) return json({ id: session.id, url: session.url });
@@ -266,6 +363,9 @@ async function stripeWebhook(request, env, ctx, url) {
     case "charge.refunded":
       result = { ...result, ...(await refund(obj, env, ctx)) };
       break;
+    case "customer.subscription.deleted":
+      result = { ...result, ...(await subscriptionEnded(obj, env, ctx)) };
+      break;
     default:
       break;
   }
@@ -290,15 +390,8 @@ async function fulfil(session, env, ctx, url, isProbe) {
   const email = session.customer_details?.email || session.customer_email;
   if (!email) throw new Error("Checkout Session has no customer email");
   const orders = await sb(env, "POST", "orders?on_conflict=stripe_session_id", [{
-    stripe_session_id: session.id,
-    stripe_payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
+    ...orderBasics(session, env, isProbe),
     email,
-    customer_name: session.customer_details?.name ?? null,
-    product: env.PRODUCT_NAME,
-    amount_total: session.amount_total ?? 0,
-    currency: session.currency ?? "usd",
-    status: "paid",
-    is_probe: isProbe,
   }], "resolution=merge-duplicates,return=representation");
   const order = orders[0];
   const objectKey = isProbe && session.metadata?.backplane_probe_object ? session.metadata.backplane_probe_object : env.PRODUCT_FILE_KEY;
@@ -339,6 +432,23 @@ async function fulfil(session, env, ctx, url, isProbe) {
   return { outcome: "fulfilled", probe: { order_id: order.id, download_url: downloadUrl, email_id: emailId, email_error: emailError } };
 }
 
+// The columns every paid order records. What was bought comes from the
+// session's metadata, which only this Worker writes.
+function orderBasics(session, env, isProbe) {
+  return {
+    stripe_session_id: session.id,
+    stripe_payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
+    stripe_subscription_id: typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null,
+    customer_name: session.customer_details?.name ?? null,
+    product: session.metadata?.items || env.PRODUCT_NAME,
+    items: linesFromMeta(env, session.metadata),
+    amount_total: session.amount_total ?? 0,
+    currency: session.currency ?? "usd",
+    status: "paid",
+    is_probe: isProbe,
+  };
+}
+
 // Physical orders: record who and where to ship, confirm by email. Fulfilment
 // status is updated from your own tools (or the Supabase dashboard).
 async function fulfilShipment(session, env, ctx, isProbe) {
@@ -346,15 +456,8 @@ async function fulfilShipment(session, env, ctx, isProbe) {
   if (!email) throw new Error("Checkout Session has no customer email");
   const ship = session.collected_information?.shipping_details || session.shipping_details || null;
   const orders = await sb(env, "POST", "orders?on_conflict=stripe_session_id", [{
-    stripe_session_id: session.id,
-    stripe_payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id ?? null,
+    ...orderBasics(session, env, isProbe),
     email,
-    customer_name: session.customer_details?.name ?? null,
-    product: env.PRODUCT_NAME,
-    amount_total: session.amount_total ?? 0,
-    currency: session.currency ?? "usd",
-    status: "paid",
-    is_probe: isProbe,
     shipping_name: ship?.name ?? session.customer_details?.name ?? null,
     shipping_address: ship?.address ?? null,
     phone: session.customer_details?.phone ?? null,
@@ -390,13 +493,13 @@ async function sendOrderEmail(env, { email, name, order, ship }) {
   const business = env.BUSINESS_NAME || env.PRODUCT_NAME;
   const msg = {
     from: env.FROM_EMAIL, to: [email], tags: [{ name: "kind", value: "purchase" }],
-    subject: `Order confirmed — ${env.PRODUCT_NAME}`,
-    text: `Thanks for your order of ${env.PRODUCT_NAME} (${money(order.amount_total, order.currency)}).\nWe'll ship to:\n${lines.join("\n")}\nOrder ${order.id}`,
+    subject: `Order confirmed — ${business}`,
+    text: `Thanks for your order of ${order.product} (${money(order.amount_total, order.currency)}).\nWe'll ship to:\n${lines.join("\n")}\nOrder ${order.id}`,
     html: `<!doctype html><html><body style="margin:0;background:#f4f2ee;padding:32px 12px;font:16px/1.55 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1b1d1f">
 <table role="presentation" width="100%" style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e3ded4;border-radius:10px"><tr><td style="padding:32px">
 <p style="margin:0 0 6px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#6b665c">${escapeHtml(business)}</p>
 <h1 style="margin:0 0 16px;font-size:24px">Thanks, ${escapeHtml(name || "there")} — your order is confirmed.</h1>
-<p style="margin:0 0 18px">You ordered <strong>${escapeHtml(env.PRODUCT_NAME)}</strong> for ${escapeHtml(money(order.amount_total, order.currency))}. We'll email you when it ships.</p>
+<p style="margin:0 0 18px">You ordered <strong>${escapeHtml(order.product)}</strong> for ${escapeHtml(money(order.amount_total, order.currency))}. We'll email you when it ships.</p>
 <p style="margin:0 0 6px;color:#555">Shipping to</p><p style="margin:0 0 22px">${lines.map(escapeHtml).join("<br>")}</p>
 <hr style="border:0;border-top:1px solid #eee;margin:26px 0 14px"><p style="margin:0;color:#777;font-size:13px">Order ${escapeHtml(order.id)} · Questions? Reply or write to ${escapeHtml(env.SUPPORT_EMAIL || env.FROM_EMAIL)}.</p>
 </td></tr></table></body></html>`,
@@ -416,6 +519,18 @@ async function refund(charge, env, ctx) {
   }
   ctx.waitUntil(logEvent(env, "stripe", "refund", `Refund processed; ${orders?.length || 0} order(s) revoked`, pi));
   return { outcome: "refunded" };
+}
+
+// A canceled subscription ends access: the order is marked canceled, and
+// its downloads and license keys stop working.
+async function subscriptionEnded(sub, env, ctx) {
+  const orders = await sb(env, "PATCH", `orders?stripe_subscription_id=eq.${encodeURIComponent(sub.id)}&status=eq.paid`, { status: "canceled" }, "return=representation");
+  for (const o of orders || []) {
+    await sb(env, "PATCH", `downloads?order_id=eq.${o.id}`, { revoked: true }, "return=minimal");
+    await sb(env, "PATCH", `licenses?order_id=eq.${o.id}`, { revoked: true }, "return=minimal");
+  }
+  ctx.waitUntil(logEvent(env, "stripe", "subscription", `Subscription ${sub.id} ended; ${orders?.length || 0} order(s) closed`, sub.id));
+  return { outcome: "subscription_ended" };
 }
 
 // ───────────────────────── downloads ─────────────────────────
@@ -471,7 +586,7 @@ async function licenseKeyFor(env, sessionId) {
 async function issueLicense(env, order, session) {
   const key = await licenseKeyFor(env, session.id);
   const hash = await hmacHex(env.DOWNLOAD_SIGNING_SECRET, `license-hash:${key}`);
-  await sb(env, "POST", "licenses?on_conflict=key_hash", [{ order_id: order.id, key_hash: hash, key_hint: key.slice(-5), product: env.PRODUCT_NAME, is_probe: order.is_probe }],
+  await sb(env, "POST", "licenses?on_conflict=key_hash", [{ order_id: order.id, key_hash: hash, key_hint: key.slice(-5), product: order.product || env.PRODUCT_NAME, is_probe: order.is_probe }],
     "resolution=ignore-duplicates,return=minimal");
   return key;
 }
@@ -502,7 +617,7 @@ async function resend(env, path, body) {
 async function sendPurchaseEmail(env, { email, name, order, downloadUrl, expires, license }) {
   const expiresText = new Date(expires * 1000).toUTCString().replace(" GMT", " UTC");
   const vars = {
-    PRODUCT_NAME: env.PRODUCT_NAME, CUSTOMER_NAME: name || "there", DOWNLOAD_URL: downloadUrl, AMOUNT: money(order.amount_total, order.currency),
+    PRODUCT_NAME: order.product || env.PRODUCT_NAME, CUSTOMER_NAME: name || "there", DOWNLOAD_URL: downloadUrl, AMOUNT: money(order.amount_total, order.currency),
     ORDER_ID: order.id, EXPIRES: expiresText, BUSINESS_NAME: env.BUSINESS_NAME || env.PRODUCT_NAME, SUPPORT_EMAIL: env.SUPPORT_EMAIL || env.FROM_EMAIL,
     LICENSE_KEY: license || "",
   };
@@ -670,9 +785,7 @@ async function health(request, env, url) {
   });
   checks.stripe = await timed(async () => {
     if (!env.STRIPE_SECRET_KEY) throw new Error("STRIPE_SECRET_KEY not set");
-    const price = await stripe(env, "GET", `/v1/prices/${env.PRICE_ID}`);
-    if (!price.active) throw new Error(`price ${env.PRICE_ID} is inactive`);
-    return `price ${money(price.unit_amount, price.currency)} active (${price.livemode ? "live" : "test"} mode)`;
+    return await checkPrices(env);
   });
   checks.resend = await timed(async () => {
     if (!env.RESEND_API_KEY) throw new Error("RESEND_API_KEY not set");
@@ -685,6 +798,20 @@ async function health(request, env, url) {
   });
   const ok = missing.length === 0 && Object.values(checks).every((c) => c.ok);
   return json({ ok, worker: env.WORKER_NAME, version: env.CODE_VERSION || "", checks, missing, time: new Date().toISOString() }, 200, { "X-Backplane-Worker": env.WORKER_NAME || "" });
+}
+
+// Confirms the catalog's prices are active and readable with the Worker's key.
+async function checkPrices(env) {
+  const cat = catalog(env);
+  if (!cat.items.length) throw new Error("nothing for sale: CATALOG has no items");
+  const all = cat.items.flatMap((it) => Object.entries(it.prices || {}).map(([iv, id]) => ({ it, iv, id })));
+  let mode = "test";
+  for (const p of all.slice(0, HEALTH_PRICE_LIMIT)) {
+    const price = await stripe(env, "GET", `/v1/prices/${encodeURIComponent(p.id)}`);
+    if (!price.active) throw new Error(`price for ${p.it.name} (${p.iv}) is inactive`);
+    mode = price.livemode ? "live" : "test";
+  }
+  return `${all.length} price${all.length === 1 ? "" : "s"} for ${cat.items.length} item${cat.items.length === 1 ? "" : "s"} active (${mode} mode)`;
 }
 
 async function probeStripe(request, env, sessionId) {

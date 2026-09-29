@@ -161,7 +161,9 @@ func (priceH) Apply(ctx context.Context, s *providers.Session, spec *core.Resour
 		return nil, fmt.Errorf("price needs an amount and a product")
 	}
 	// Prices are immutable. Keep the existing one when amount, currency and
-	// interval still match; otherwise create a new price and deactivate the old.
+	// interval still match; otherwise create a new price first and only then
+	// deactivate the old one, so there is always an active price to sell.
+	retire := ""
 	if st != nil && st.ID != "" {
 		var p price
 		if err := Call(ctx, c, "GET", "/v1/prices/"+st.ID, nil, "", &p); err == nil {
@@ -173,12 +175,19 @@ func (priceH) Apply(ctx context.Context, s *providers.Session, spec *core.Resour
 				if !p.Active {
 					_ = Call(ctx, c, "POST", "/v1/prices/"+p.ID, map[string]any{"active": true}, "", nil)
 				}
-				next := providers.Touch(spec, st, p.ID, Money(amount, currency))
+				label := Money(amount, currency)
+				if interval != "" {
+					label += " / " + interval
+				}
+				next := providers.Touch(spec, st, p.ID, label)
 				next.SetOutput("id", p.ID)
+				next.SetOutput("amount", fmt.Sprint(amount))
+				next.SetOutput("currency", currency)
+				next.SetOutput("interval", orDefaultStr(interval, "once"))
 				return &providers.ApplyResult{State: next}, nil
 			}
-			s.Say("Price changed: retiring %s and creating a new one", p.ID)
-			_ = Call(ctx, c, "POST", "/v1/prices/"+p.ID, map[string]any{"active": false}, "", nil)
+			s.Say("Price changed: creating a new one, then retiring %s", p.ID)
+			retire = p.ID
 		} else if !httpx.IsNotFound(err) {
 			return nil, err
 		}
@@ -206,8 +215,15 @@ func (priceH) Apply(ctx context.Context, s *providers.Session, spec *core.Resour
 	if err := Call(ctx, c, "POST", "/v1/prices", params, idem(s, spec, "-"+productID), &p); err != nil {
 		return nil, err
 	}
+	if retire != "" && retire != p.ID {
+		// Checkout Sessions already open keep working; new ones use the new price.
+		_ = Call(ctx, c, "POST", "/v1/prices/"+retire, map[string]any{"active": false}, "", nil)
+	}
 	next := providers.Touch(spec, st, p.ID, label)
 	next.SetOutput("id", p.ID)
+	next.SetOutput("amount", fmt.Sprint(amount))
+	next.SetOutput("currency", currency)
+	next.SetOutput("interval", orDefaultStr(interval, "once"))
 	return &providers.ApplyResult{State: next, Created: true}, nil
 }
 
@@ -250,6 +266,13 @@ func (priceH) Delete(ctx context.Context, s *providers.Session, st *core.Resourc
 		return nil
 	}
 	return err
+}
+
+func orDefaultStr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // ================= Webhook endpoint =================

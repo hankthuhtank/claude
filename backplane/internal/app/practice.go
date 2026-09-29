@@ -144,9 +144,38 @@ func (a *App) StopPractice(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	s.Close()
+	a.Engine.PracticeBaseURLs = nil
 	a.resetPractice()
+	a.markPracticeOffline()
+	a.log("info", "", "", "Practice sandbox stopped — practice backends were reset and practice connections switched off.")
 	a.Engine.Bus.Publish(engine.Event{Type: "practice", Data: map[string]any{"running": false}})
 	return true, nil
+}
+
+// practiceOffNote is shown on practice connections while the sandbox is off.
+const practiceOffNote = "Sandbox off — start practice mode to use it."
+
+// markPracticeOffline switches practice connections to "off" so nothing shows
+// them as connected while the simulator isn't running (and the saved file
+// doesn't claim they work).
+func (a *App) markPracticeOffline() {
+	cs, err := a.Store.LoadConnections()
+	if err != nil {
+		return
+	}
+	changed := false
+	for i := range cs {
+		c := &cs[i]
+		if !c.Practice || (c.Status == core.HealthOff && c.StatusNote == practiceOffNote) {
+			continue
+		}
+		c.Status, c.StatusNote, c.VerifiedAt = core.HealthOff, practiceOffNote, nil
+		c.Warnings, c.Details = nil, nil
+		changed = true
+	}
+	if changed {
+		_ = a.Store.SaveConnections(cs)
+	}
 }
 
 // PracticeState reports the sandbox and the failures it can inject.
@@ -354,5 +383,6 @@ func (a *App) resetPracticeIfStale() {
 	a.mu.Unlock()
 	if !running {
 		a.resetPractice()
+		a.markPracticeOffline()
 	}
 }

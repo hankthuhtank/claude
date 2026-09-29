@@ -54,4 +54,4 @@ export function Icon({ name, size, title, class: cls }) {
   );
 }
 
-export const statusIcon = { ok: "ok", warn: "warn", fail: "fail", unknown: "ring", skipped: "ring" };
+export const statusIcon = { ok: "ok", warn: "warn", fail: "fail", unknown: "ring", skipped: "ring", off: "ring" };

@@ -40,6 +40,21 @@ type Question struct {
 	Required bool     `json:"required,omitempty"`
 	Advanced bool     `json:"advanced,omitempty"`
 	Pattern  string   `json:"pattern,omitempty"`
+	// Placeholder is example text shown in an empty field.
+	Placeholder string `json:"placeholder,omitempty"`
+	// Products configures a kind "products" list (see products.go).
+	Products *ProductsSpec `json:"products,omitempty"`
+}
+
+// ProductsSpec returns the preset's products question settings, or nil when
+// it sells nothing through Backplane.
+func (t Template) ProductsSpec() *ProductsSpec {
+	for _, q := range t.Questions {
+		if q.Kind == "products" {
+			return q.Products
+		}
+	}
+	return nil
 }
 
 // Template is a reusable backend recipe.
@@ -141,28 +156,43 @@ func Slug(s string) string {
 	return s
 }
 
-var commonCommerce = []Question{
-	{Key: "product_name", Label: "What are you selling?", Kind: "text", Default: "My App", Required: true},
-	{Key: "price", Label: "Price", Kind: "money", Default: 29.0, Required: true, Help: "One-time price customers pay."},
-	{Key: "currency", Label: "Currency", Kind: "select", Default: "usd", Options: []string{"usd", "eur", "gbp", "cad", "aud"}},
-	{Key: "business_name", Label: "Business name (shown in emails)", Kind: "text", Default: ""},
-	{Key: "domain", Label: "Email domain", Kind: "domain", Required: true, Help: "Receipts are sent from this domain, e.g. example.com. Backplane adds the DNS records if the domain is on your Cloudflare account."},
-	{Key: "from_email", Label: "Send receipts from", Kind: "email", Help: "Defaults to orders@ your domain."},
-	{Key: "support_email", Label: "Support email", Kind: "email", Help: "Customers reply here."},
-	{Key: "site_origin", Label: "Your website", Kind: "url", Help: "Where the Buy button lives, e.g. https://example.com. Allows your site to call the API."},
-	{Key: "accounts", Label: "Let customers sign in to see past purchases", Kind: "toggle", Default: true},
-	{Key: "include_github", Label: "Keep the code in GitHub and deploy automatically", Kind: "toggle", Default: true},
-	{Key: "download_ttl_hours", Label: "Download link lifetime (hours)", Kind: "number", Default: 72, Advanced: true},
-	{Key: "max_downloads", Label: "Downloads allowed per purchase", Kind: "number", Default: 10, Advanced: true},
-	{Key: "region", Label: "Database region", Kind: "select", Default: "us-east-1", Advanced: true,
-		Options: []string{"us-east-1", "us-east-2", "us-west-1", "us-west-2", "ca-central-1", "eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-central-2", "eu-north-1", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-east-1", "sa-east-1"}},
-	{Key: "github_repo", Label: "GitHub repository name", Kind: "text", Advanced: true},
-	{Key: "workers_subdomain", Label: "workers.dev subdomain (only if your account has none)", Kind: "text", Advanced: true},
-}
+var regions = []string{"us-east-1", "us-east-2", "us-west-1", "us-west-2", "ca-central-1", "eu-west-1", "eu-west-2", "eu-west-3", "eu-central-1", "eu-central-2", "eu-north-1", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "ap-northeast-2", "ap-east-1", "sa-east-1"}
 
-func withFile(label string) []Question {
-	q := append([]Question{}, commonCommerce...)
-	return append(q[:2], append([]Question{{Key: "product_file", Label: label, Kind: "file", Help: "Optional now — you can upload it later from the dashboard."}}, q[2:]...)...)
+var currencyQ = Question{Key: "currency", Label: "Currency", Kind: "select", Default: "usd", Options: []string{"usd", "eur", "gbp", "cad", "aud"}}
+
+// storeQuestions builds a store preset's questions. Downloads and license
+// stores sell digital items (one-time or subscription); the physical-goods
+// store sells a cart of one-time items and never asks about downloads.
+func storeQuestions(mode, fileLabel, example string) []Question {
+	spec := ProductsSpec{Noun: "product", Billing: []string{BillOnce, BillMonth, BillYear}, MaxQuantity: 1, PriceLabel: "Price", Placeholder: example}
+	if mode == "shipping" {
+		spec = ProductsSpec{Noun: "product", Billing: []string{BillOnce}, Quantity: true, MaxQuantity: 20, PriceLabel: "Price", Placeholder: example}
+	}
+	q := []Question{productsQuestion(spec)}
+	if fileLabel != "" {
+		q = append(q, Question{Key: "product_file", Label: fileLabel, Kind: "file",
+			Help: "Optional now. Until it's uploaded, the backend page lists it as a to-do — it isn't counted as a health problem."})
+	}
+	q = append(q, currencyQ,
+		Question{Key: "business_name", Label: "Business name (shown in emails)", Kind: "text", Help: "Defaults to the backend name."},
+		Question{Key: "domain", Label: "Email domain", Kind: "domain", Required: true, Help: "Receipts are sent from this domain, e.g. example.com. Backplane adds the DNS records if the domain is on your Cloudflare account."},
+		Question{Key: "from_email", Label: "Send receipts from", Kind: "email", Help: "Defaults to orders@ your domain."},
+		Question{Key: "support_email", Label: "Support email", Kind: "email", Help: "Customers reply here."},
+		Question{Key: "site_origin", Label: "Your website", Kind: "url", Help: "Where the Buy button lives, e.g. https://example.com. Allows your site to call the API."})
+	if mode == "shipping" {
+		q = append(q, Question{Key: "ship_countries", Label: "Countries you ship to", Kind: "text", Default: "US,CA", Help: "Two-letter country codes separated by commas, e.g. US,CA,GB."})
+	} else {
+		q = append(q, Question{Key: "accounts", Label: "Let customers sign in to see past purchases", Kind: "toggle", Default: true})
+	}
+	q = append(q, Question{Key: "include_github", Label: "Keep the code in GitHub and deploy automatically", Kind: "toggle", Default: true})
+	if mode != "shipping" {
+		q = append(q, Question{Key: "download_ttl_hours", Label: "Download link lifetime (hours)", Kind: "number", Default: 72, Advanced: true},
+			Question{Key: "max_downloads", Label: "Downloads allowed per purchase", Kind: "number", Default: 10, Advanced: true})
+	}
+	return append(q,
+		Question{Key: "region", Label: "Database region", Kind: "select", Default: "us-east-1", Advanced: true, Options: regions},
+		Question{Key: "github_repo", Label: "GitHub repository name", Kind: "text", Advanced: true},
+		Question{Key: "workers_subdomain", Label: "workers.dev subdomain (only if your account has none)", Kind: "text", Advanced: true})
 }
 
 var storeFlow = []string{"Customer Checkout", "Stripe", "Webhook", "Cloudflare Worker", "Supabase Orders", "Resend Confirmation", "R2 Secure Download"}
@@ -173,29 +203,29 @@ var Catalog = []Template{
 		Summary:      "Sell a desktop app or file for a one-time price and deliver it with an expiring, private download link.",
 		Example:      "People pay $29 once, get an email and a temporary download link.",
 		Capabilities: []core.Capability{core.CapPayments, core.CapWebhooks, core.CapAPI, core.CapDatabase, core.CapStorage, core.CapEmail, core.CapAuth, core.CapCICD},
-		Providers:    []string{"stripe", "cloudflare", "supabase", "resend", "github"}, Flow: storeFlow, Questions: withFile("Installer or file customers download")},
+		Providers:    []string{"stripe", "cloudflare", "supabase", "resend", "github"}, Flow: storeFlow, Questions: storeQuestions("download", "Installer or file customers download", "e.g. Pixel Presets — personal license")},
 	{ID: "digital-downloads", Name: "Digital Downloads", Category: "Sell", Engine: "commerce", Mode: "download", Level: LevelFull,
 		Summary:      "Ebooks, templates, presets, audio packs — pay once, download privately.",
 		Example:      "Sell a $12 template pack with a link that expires after 3 days.",
 		Capabilities: []core.Capability{core.CapPayments, core.CapWebhooks, core.CapAPI, core.CapDatabase, core.CapStorage, core.CapEmail},
-		Providers:    []string{"stripe", "cloudflare", "supabase", "resend", "github"}, Flow: storeFlow, Questions: withFile("The file customers download")},
+		Providers:    []string{"stripe", "cloudflare", "supabase", "resend", "github"}, Flow: storeFlow, Questions: storeQuestions("download", "The file customers download", "e.g. Notion template pack")},
 	{ID: "photography-store", Name: "Photography Store", Category: "Sell", Engine: "commerce", Mode: "download", Level: LevelFull,
 		Summary:      "Sell full-resolution photos or collections; buyers get private originals.",
 		Example:      "Sell a $49 full-resolution wedding gallery download.",
 		Capabilities: []core.Capability{core.CapPayments, core.CapWebhooks, core.CapAPI, core.CapDatabase, core.CapStorage, core.CapEmail, core.CapMedia},
-		Providers:    []string{"stripe", "cloudflare", "supabase", "resend", "github"}, Flow: storeFlow, Questions: withFile("Full-resolution file or zip")},
+		Providers:    []string{"stripe", "cloudflare", "supabase", "resend", "github"}, Flow: storeFlow, Questions: storeQuestions("download", "Full-resolution file or zip", "e.g. Full wedding gallery")},
 	{ID: "license-server", Name: "License Server", Category: "Sell", Engine: "commerce", Mode: "license", Level: LevelFull,
 		Summary:      "Sell software with license keys your app can validate against your own API.",
 		Example:      "Each purchase issues a license key; the app calls /license/validate.",
 		Capabilities: []core.Capability{core.CapPayments, core.CapWebhooks, core.CapAPI, core.CapDatabase, core.CapStorage, core.CapEmail},
 		Providers:    []string{"stripe", "cloudflare", "supabase", "resend", "github"}, Flow: []string{"Customer Checkout", "Stripe", "Webhook", "Cloudflare Worker", "Supabase Licenses", "Resend License Email", "App validates key"},
-		Questions: withFile("Installer customers download")},
+		Questions: storeQuestions("license", "Installer customers download", "e.g. Pro license")},
 	{ID: "ecommerce", Name: "E-commerce Store", Category: "Sell", Engine: "commerce", Mode: "shipping", Level: LevelFull,
 		Summary:      "Sell physical products: checkout with shipping address, order records and confirmation emails.",
 		Example:      "Sell a $35 candle; collect the shipping address and email a confirmation.",
 		Capabilities: []core.Capability{core.CapPayments, core.CapWebhooks, core.CapAPI, core.CapDatabase, core.CapEmail},
 		Providers:    []string{"stripe", "cloudflare", "supabase", "resend", "github"}, Flow: []string{"Customer Checkout", "Stripe (address)", "Webhook", "Cloudflare Worker", "Supabase Orders", "Resend Confirmation"},
-		Questions: commonCommerce},
+		Questions: storeQuestions("shipping", "", "e.g. Hand-poured candle")},
 	{ID: "saas", Name: "SaaS", Category: "Software products", Engine: "data", Level: LevelCore,
 		Summary:      "Accounts, teams, per-user data with row-level security, file uploads and transactional email.",
 		Example:      "Users sign up, verify email, create projects and upload files.",
@@ -205,7 +235,7 @@ var Catalog = []Template{
 		Example:      "A free tool where people save their own items.",
 		Capabilities: []core.Capability{core.CapAuth, core.CapDatabase, core.CapEmail}, Providers: []string{"supabase", "resend", "cloudflare"}},
 	{ID: "subscription-saas", Name: "Subscription SaaS", Category: "Software products", Engine: "data", Level: LevelCore,
-		Summary:      "Monthly or yearly plans with a customer portal; subscription status kept in your database.",
+		Summary:      "Plans with monthly and optional yearly prices, a customer portal, and subscription status kept in your database.",
 		Example:      "$19/month Pro plan with a self-serve billing portal.",
 		Capabilities: []core.Capability{core.CapAuth, core.CapPayments, core.CapWebhooks, core.CapDatabase, core.CapEmail, core.CapAPI}, Providers: []string{"supabase", "stripe", "cloudflare", "resend", "github"}},
 	{ID: "membership", Name: "Membership Site", Category: "Community", Engine: "data", Level: LevelCore,
@@ -213,7 +243,7 @@ var Catalog = []Template{
 		Example:      "Members pay $9/month to read premium posts.",
 		Capabilities: []core.Capability{core.CapAuth, core.CapPayments, core.CapWebhooks, core.CapDatabase, core.CapEmail}, Providers: []string{"supabase", "stripe", "cloudflare", "resend"}},
 	{ID: "marketplace", Name: "Marketplace", Category: "Sell", Engine: "data", Level: LevelCore,
-		Summary:      "Sellers list items, buyers purchase; data model with seller/buyer isolation. Stripe Connect payouts are set up in Stripe.",
+		Summary:      "Sellers list items with their own prices, buyers purchase; data model with seller/buyer isolation. Stripe Connect payouts are set up in Stripe.",
 		Example:      "Local makers list products; buyers order from them.",
 		Capabilities: []core.Capability{core.CapAuth, core.CapDatabase, core.CapStorage, core.CapPayments, core.CapEmail}, Providers: []string{"supabase", "stripe", "cloudflare", "resend"}},
 	{ID: "mobile-app", Name: "Mobile Application", Category: "Software products", Engine: "data", Level: LevelCore,
@@ -232,12 +262,12 @@ var Catalog = []Template{
 		Summary:      "Jobs, schedules, photos and sign-offs for field crews and customers.",
 		Example:      "Crews upload job-site photos; customers approve completed work.",
 		Capabilities: []core.Capability{core.CapAuth, core.CapDatabase, core.CapStorage, core.CapEmail}, Providers: []string{"supabase", "resend", "cloudflare"}},
-	{ID: "booking", Name: "Booking System", Category: "Services", Engine: "data", Level: LevelCore,
-		Summary:      "Customers book appointments, pay deposits and get confirmations and reminders.",
+	{ID: "booking", Name: "Booking System", Category: "Services", Engine: "data", Level: LevelFull,
+		Summary:      "Customers pick a service and a time, pay a deposit, and get a confirmation and a reminder the day before. No account needed.",
 		Example:      "Book a haircut, pay a $10 deposit, get a reminder the day before.",
 		Capabilities: []core.Capability{core.CapDatabase, core.CapPayments, core.CapWebhooks, core.CapEmail, core.CapScheduler}, Providers: []string{"supabase", "stripe", "cloudflare", "resend"}},
-	{ID: "restaurant", Name: "Restaurant Ordering", Category: "Services", Engine: "data", Level: LevelCore,
-		Summary:      "Menu, online orders, payment and a live kitchen order feed.",
+	{ID: "restaurant", Name: "Restaurant Ordering", Category: "Services", Engine: "data", Level: LevelFull,
+		Summary:      "Your menu with prices, online orders with a cart, payment, a confirmation email and a live kitchen order feed.",
 		Example:      "Order pickup online; the kitchen screen updates instantly.",
 		Capabilities: []core.Capability{core.CapDatabase, core.CapPayments, core.CapRealtime, core.CapEmail}, Providers: []string{"supabase", "stripe", "cloudflare", "resend"}},
 	{ID: "file-sharing", Name: "File Sharing", Category: "Operations", Engine: "data", Level: LevelCore,
@@ -334,9 +364,9 @@ func init() {
 		t.AddOns = addOnsOf[t.ID]
 		t.Stack = stackFor(t)
 		if t.Level == LevelFull {
-			t.LevelNote = "Backplane builds everything, writes the backend code, and proves the full customer journey with an end-to-end test."
+			t.LevelNote = "Ready to sell: Backplane builds everything, writes the backend code, and proves the full customer journey with an end-to-end test."
 		} else {
-			t.LevelNote = "Backplane builds the database (with row-level security), sign-in, storage, email and a monitored API Worker, and proves data isolation end to end. Your app's own screens and business logic plug into it."
+			t.LevelNote = "Backend only — you bring the app: Backplane builds the database (with row-level security), sign-in, storage, email and a monitored API Worker, and proves data isolation end to end. Your app's own screens and business logic plug into it."
 		}
 		if len(t.Questions) == 0 {
 			t.Questions = dataQuestions(*t)

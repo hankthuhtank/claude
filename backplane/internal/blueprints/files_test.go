@@ -16,7 +16,11 @@ var placeholderRe = regexp.MustCompile(`\{\{\s*([a-z]+)(?::([^}]+?))?\s*\}\}`)
 // contains quotes), and carries exactly the Worker's vars, bindings and crons.
 func TestWranglerConfigMatchesWorker(t *testing.T) {
 	for _, tpl := range Catalog {
-		bp, err := Build(tpl, `Joe's "Best" Shop`, Answers{"domain": "joes-shop.com", "business_name": `Joe's "Best" Shop`})
+		answers := Answers{"domain": "joes-shop.com", "business_name": `Joe's "Best" Shop`}
+		if spec := tpl.ProductsSpec(); spec != nil {
+			answers["products"] = []any{map[string]any{"name": `Joe's "Best" {{Thing}}`, "price": 12.5}, map[string]any{"name": "Second item", "price": 30.0, "billing": spec.Billing[len(spec.Billing)-1]}}
+		}
+		bp, err := Build(tpl, `Joe's "Best" Shop`, answers)
 		if err != nil {
 			t.Fatalf("%s: build: %v", tpl.ID, err)
 		}

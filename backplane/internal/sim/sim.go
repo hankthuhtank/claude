@@ -380,6 +380,10 @@ func (s *Server) Apply(c Control) (string, error) {
 		return s.cfDeleteWorker(c.Target)
 	case "fail_deploy":
 		return s.ghFailDeploy(c.Target)
+	case "pay_session":
+		return s.stripePaySession(c.Target, c.Value)
+	case "cancel_subscription":
+		return s.stripeCancelSubscription(c.Target)
 	}
 	return "", fmt.Errorf("unknown action %q", c.Action)
 }

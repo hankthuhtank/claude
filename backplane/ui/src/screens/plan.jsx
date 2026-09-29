@@ -31,7 +31,7 @@ export function PlanView({ plan, project, onApproved, onDiscard }) {
           <div class="h2" style="margin-top:4px">{plan.purpose || (changes.length ? `${changes.length} change${changes.length === 1 ? "" : "s"} to make` : "Nothing to change")}</div>
           <div class="small ink2" style="margin-top:2px">{project?.name} · {countsLine(plan.counts)}</div>
         </div>
-        <span class={`stamp ${plan.production ? "prod" : ""}`}>{plan.environment}</span>
+        {plan.practice ? <span class="stamp practice">Practice</span> : <span class={`stamp ${plan.production ? "prod" : ""}`}>{plan.environment}</span>}
       </div>
       <div class="wo-body">
         <div class="stack" style="gap:8px;margin:12px 0">
@@ -53,7 +53,7 @@ export function PlanView({ plan, project, onApproved, onDiscard }) {
         ) : null}
         {plan.costs?.length ? (
           <div class="wo-group">
-            <div class="who"><b class="h3">Estimated cost</b><span class="small muted">Estimates, not guarantees</span></div>
+            <div class="who"><b class="h3">{plan.practice ? "Cost" : "Estimated cost"}</b><span class="small muted">{plan.practice ? "Nothing is billed in practice mode" : "Estimates, not guarantees"}</span></div>
             <table class="t">
               <thead><tr><th>Service</th><th>Estimate</th><th>Assumes</th></tr></thead>
               <tbody>{plan.costs.map((c) => <tr><td><b>{providerName(c.provider)}</b></td><td>{c.estimate}</td><td class="small ink2">{c.basis}{c.upgrade ? <div class="muted">{c.upgrade}</div> : null}</td></tr>)}</tbody>

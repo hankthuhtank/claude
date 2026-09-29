@@ -206,21 +206,296 @@ func bearerTok(r *http.Request) string {
 
 // ---- commerce Worker ----
 
-var commerceRequired = []string{"SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "PRICE_ID", "RESEND_API_KEY", "FROM_EMAIL", "DOWNLOAD_SIGNING_SECRET", "BACKPLANE_PROBE_TOKEN", "PRODUCT_NAME"}
+var commerceRequired = []string{"SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "CATALOG", "RESEND_API_KEY", "FROM_EMAIL", "DOWNLOAD_SIGNING_SECRET", "BACKPLANE_PROBE_TOKEN", "PRODUCT_NAME"}
+
+// ---- catalog (mirrors the generated Workers' catalog handling) ----
+
+type catItem struct {
+	Key         string            `json:"key"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Minutes     int               `json:"minutes,omitempty"`
+	Billing     string            `json:"billing"`
+	Prices      map[string]string `json:"prices"`
+	Amounts     map[string]int64  `json:"amounts"`
+}
+
+type catalogT struct {
+	Currency string    `json:"currency"`
+	Items    []catItem `json:"items"`
+}
+
+func (c *catalogT) item(key string) *catItem {
+	for i := range c.Items {
+		if c.Items[i].Key == key {
+			return &c.Items[i]
+		}
+	}
+	return nil
+}
+
+func wCatalog(env *wenv) *catalogT {
+	var c catalogT
+	if err := json.Unmarshal([]byte(env.get("CATALOG")), &c); err == nil {
+		return &c
+	}
+	if id := env.get("PRICE_ID"); id != "" {
+		return &catalogT{Currency: "usd", Items: []catItem{{Key: "main", Name: env.get("PRODUCT_NAME"), Billing: "once", Prices: map[string]string{"once": id}}}}
+	}
+	return &catalogT{Currency: "usd"}
+}
+
+type orderLine struct {
+	Key      string
+	Name     string
+	Quantity int
+	Price    string
+	Amount   int64
+}
+
+type pricedOrder struct {
+	Interval string
+	Lines    []orderLine
+	Summary  string
+	Keys     string
+}
+
+// readOrder mirrors the Worker: JSON body, form post or query string.
+func readOrder(r *http.Request) ([]map[string]any, string) {
+	src := map[string]any{}
+	for k, v := range r.URL.Query() {
+		src[k] = v[0]
+	}
+	if r.Method == "POST" {
+		ct := r.Header.Get("Content-Type")
+		switch {
+		case strings.Contains(ct, "application/json"):
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			for k, v := range body {
+				src[k] = v
+			}
+		case strings.Contains(ct, "form"):
+			_ = r.ParseForm()
+			for k, v := range r.PostForm {
+				src[k] = v[0]
+			}
+		}
+	}
+	var lines []map[string]any
+	if arr, ok := src["items"].([]any); ok {
+		for _, x := range arr {
+			m, _ := x.(map[string]any)
+			lines = append(lines, m)
+		}
+	} else if src["item"] != nil {
+		lines = []map[string]any{{"key": src["item"], "quantity": src["quantity"]}}
+	}
+	return lines, str(src["interval"])
+}
+
+// priceLines mirrors the Worker's validation: known keys only, whole
+// quantities within MAX_QUANTITY, one interval per order. Amounts are
+// never read from the request.
+func priceLines(env *wenv, req []map[string]any, interval string) (*pricedOrder, error) {
+	cat := wCatalog(env)
+	if len(cat.Items) == 0 {
+		return nil, fmt.Errorf("Nothing is for sale yet.")
+	}
+	maxQ, _ := strconv.Atoi(env.get("MAX_QUANTITY"))
+	if maxQ < 1 {
+		maxQ = 1
+	}
+	cart := env.get("CART") == "true"
+	if len(req) == 0 {
+		req = []map[string]any{{"key": cat.Items[0].Key, "quantity": 1.0}}
+	}
+	limit := 1
+	if cart {
+		limit = 20
+	}
+	if len(req) > limit {
+		if cart {
+			return nil, fmt.Errorf("Up to 20 different items per order.")
+		}
+		return nil, fmt.Errorf("Choose one item.")
+	}
+	var order []string
+	qty := map[string]int{}
+	for _, l := range req {
+		key := str(l["key"])
+		if key == "" {
+			key = str(l["item"])
+		}
+		if cat.item(key) == nil {
+			if len(key) > 40 {
+				key = key[:40]
+			}
+			return nil, fmt.Errorf("Unknown item %q.", key)
+		}
+		q := 1.0
+		switch v := l["quantity"].(type) {
+		case float64:
+			q = v
+		case string:
+			if v != "" {
+				f, err := strconv.ParseFloat(v, 64)
+				if err != nil {
+					q = -1
+				} else {
+					q = f
+				}
+			}
+		case nil:
+		default:
+			q = -1
+		}
+		if _, seen := qty[key]; !seen {
+			order = append(order, key)
+		}
+		if q != float64(int(q)) || q < 1 || qty[key]+int(q) > maxQ {
+			if maxQ == 1 {
+				return nil, fmt.Errorf("Quantity must be 1.")
+			}
+			return nil, fmt.Errorf("Quantity must be between 1 and %d.", maxQ)
+		}
+		qty[key] += int(q)
+	}
+	iv := interval
+	if iv == "" {
+		iv = cat.item(order[0]).Billing
+	}
+	if iv == "" {
+		for k := range cat.item(order[0]).Prices {
+			iv = k
+		}
+	}
+	out := &pricedOrder{Interval: iv}
+	var names, keys []string
+	for _, k := range order {
+		it := cat.item(k)
+		id := it.Prices[iv]
+		if id == "" {
+			return nil, fmt.Errorf("%q isn't sold that way.", it.Name)
+		}
+		out.Lines = append(out.Lines, orderLine{Key: k, Name: it.Name, Quantity: qty[k], Price: id, Amount: it.Amounts[iv]})
+		n := it.Name
+		if qty[k] > 1 {
+			n += fmt.Sprintf(" × %d", qty[k])
+		}
+		names = append(names, n)
+		keys = append(keys, fmt.Sprintf("%s:%d", k, qty[k]))
+	}
+	out.Summary, out.Keys = strings.Join(names, ", "), strings.Join(keys, ",")
+	return out, nil
+}
+
+func publicCatalog(env *wenv) map[string]any {
+	cat := wCatalog(env)
+	var items []any
+	for _, it := range cat.Items {
+		prices := map[string]any{}
+		for iv, a := range it.Amounts {
+			prices[iv] = map[string]any{"amount": a}
+		}
+		items = append(items, map[string]any{"key": it.Key, "name": it.Name, "billing": it.Billing, "prices": prices, "minutes": it.Minutes})
+	}
+	maxQ, _ := strconv.Atoi(env.get("MAX_QUANTITY"))
+	return map[string]any{"currency": cat.Currency, "items": orAny(items), "cart": env.get("CART") == "true", "max_quantity": max(1, maxQ)}
+}
+
+// linesFromMeta reads "key:qty,…" back into order lines.
+func linesFromMeta(env *wenv, meta map[string]any) []any {
+	cat := wCatalog(env)
+	var out []any
+	for _, part := range strings.Split(str(meta["item_keys"]), ",") {
+		if part == "" {
+			continue
+		}
+		k, q, _ := strings.Cut(part, ":")
+		n, _ := strconv.Atoi(q)
+		if n == 0 {
+			n = 1
+		}
+		name := k
+		if it := cat.item(k); it != nil {
+			name = it.Name
+		}
+		out = append(out, map[string]any{"key": k, "name": name, "quantity": n})
+	}
+	return orAny(out)
+}
+
+// createCheckout creates a Stripe Checkout Session for priced lines.
+func (s *Server) createCheckout(env *wenv, po *pricedOrder, success string, meta map[string]string, extra url.Values) (map[string]any, error) {
+	mode := "payment"
+	if po.Interval != "once" {
+		mode = "subscription"
+	}
+	form := url.Values{"mode": {mode}, "success_url": {success}}
+	for i, l := range po.Lines {
+		form.Set(fmt.Sprintf("line_items[%d][price]", i), l.Price)
+		form.Set(fmt.Sprintf("line_items[%d][quantity]", i), strconv.Itoa(l.Quantity))
+	}
+	for k, v := range meta {
+		form.Set("metadata["+k+"]", v)
+	}
+	for k, v := range extra {
+		form[k] = v
+	}
+	return s.stripeW(env, "POST", "/v1/checkout/sessions", form)
+}
+
+// checkPrices mirrors the Worker's health check of its catalog prices.
+func (s *Server) checkPrices(env *wenv) (string, error) {
+	cat := wCatalog(env)
+	if len(cat.Items) == 0 {
+		return "", fmt.Errorf("nothing for sale: CATALOG has no items")
+	}
+	n, checked := 0, 0
+	for _, it := range cat.Items {
+		for iv, id := range it.Prices {
+			n++
+			if checked >= 8 {
+				continue
+			}
+			checked++
+			price, err := s.stripeW(env, "GET", "/v1/prices/"+id, nil)
+			if err != nil {
+				return "", err
+			}
+			if price["active"] != true {
+				return "", fmt.Errorf("price for %s (%s) is inactive", it.Name, iv)
+			}
+		}
+	}
+	return fmt.Sprintf("%d prices for %d items active", n, len(cat.Items)), nil
+}
 
 func (s *Server) commerceWorker(w http.ResponseWriter, r *http.Request, env *wenv, path string) {
 	switch {
 	case path == "/":
 		wjson(w, 200, map[string]any{"service": env.get("WORKER_NAME"), "ok": true})
+	case path == "/products" && r.Method == "GET":
+		wjson(w, 200, publicCatalog(env))
 	case path == "/checkout":
 		probe := r.Header.Get("X-Backplane-Probe")
 		isProbe := probe != "" && safeEq(probe, env.get("BACKPLANE_PROBE_TOKEN"))
-		form := url.Values{"mode": {"payment"}, "line_items[0][price]": {env.get("PRICE_ID")}, "line_items[0][quantity]": {"1"},
-			"success_url": {env.baseURL + "/thanks?session_id={CHECKOUT_SESSION_ID}"}, "metadata[product]": {env.get("PRODUCT_NAME")}}
-		if isProbe {
-			form.Set("metadata[backplane_probe]", "1")
+		lines, interval := readOrder(r)
+		po, err := priceLines(env, lines, interval)
+		if err != nil {
+			wjson(w, 400, map[string]any{"error": err.Error()})
+			return
 		}
-		cs, err := s.stripeW(env, "POST", "/v1/checkout/sessions", form)
+		meta := map[string]string{"product": po.Summary, "items": po.Summary, "item_keys": po.Keys, "interval": po.Interval}
+		if isProbe {
+			meta["backplane_probe"] = "1"
+		}
+		var extra url.Values
+		if env.get("FULFILLMENT_MODE") == "shipping" {
+			extra = url.Values{"shipping_address_collection[allowed_countries][0]": {"US"}}
+		}
+		cs, err := s.createCheckout(env, po, env.baseURL+"/thanks?session_id={CHECKOUT_SESSION_ID}", meta, extra)
 		if err != nil {
 			wjson(w, 500, map[string]any{"error": "internal error"})
 			return
@@ -353,6 +628,12 @@ func (s *Server) commerceWebhook(w http.ResponseWriter, r *http.Request, env *we
 		for _, o := range orders {
 			_, _ = s.sbw(env, "PATCH", "downloads?order_id=eq."+str(o["id"]), map[string]any{"revoked": true}, "return=minimal")
 		}
+	case "customer.subscription.deleted":
+		orders, _ := s.sbw(env, "PATCH", "orders?stripe_subscription_id=eq."+str(obj["id"])+"&status=eq.paid", map[string]any{"status": "canceled"}, "return=representation")
+		for _, o := range orders {
+			_, _ = s.sbw(env, "PATCH", "downloads?order_id=eq."+str(o["id"]), map[string]any{"revoked": true}, "return=minimal")
+			_, _ = s.sbw(env, "PATCH", "licenses?order_id=eq."+str(o["id"]), map[string]any{"revoked": true}, "return=minimal")
+		}
 	}
 	_, _ = s.sbw(env, "PATCH", "webhook_events?event_id=eq."+str(ev["id"]), map[string]any{"processed_at": time.Now().UTC().Format(time.RFC3339), "outcome": "ok"}, "return=minimal")
 	wjson(w, 200, result)
@@ -365,9 +646,13 @@ func (s *Server) commerceFulfil(env *wenv, cs map[string]any, isProbe bool) (map
 	details, _ := cs["customer_details"].(map[string]any)
 	email := str(details["email"])
 	meta, _ := cs["metadata"].(map[string]any)
+	product := str(meta["items"])
+	if product == "" {
+		product = env.get("PRODUCT_NAME")
+	}
 	orders, err := s.sbw(env, "POST", "orders?on_conflict=stripe_session_id", []map[string]any{{
-		"stripe_session_id": cs["id"], "stripe_payment_intent": cs["payment_intent"], "email": email, "customer_name": details["name"], "product": env.get("PRODUCT_NAME"),
-		"amount_total": cs["amount_total"], "currency": cs["currency"], "status": "paid", "is_probe": isProbe}}, "resolution=merge-duplicates,return=representation")
+		"stripe_session_id": cs["id"], "stripe_payment_intent": cs["payment_intent"], "stripe_subscription_id": cs["subscription"], "email": email, "customer_name": details["name"],
+		"product": product, "items": linesFromMeta(env, meta), "amount_total": cs["amount_total"], "currency": cs["currency"], "status": "paid", "is_probe": isProbe}}, "resolution=merge-duplicates,return=representation")
 	if err != nil || len(orders) == 0 {
 		return nil, fmt.Errorf("order insert failed: %v", err)
 	}
@@ -580,16 +865,7 @@ func (s *Server) commerceHealth(w http.ResponseWriter, r *http.Request, env *wen
 		}
 		return "orders table reachable with the server key", nil
 	})
-	checks["stripe"] = timed(func() (string, error) {
-		price, err := s.stripeW(env, "GET", "/v1/prices/"+env.get("PRICE_ID"), nil)
-		if err != nil {
-			return "", err
-		}
-		if price["active"] != true {
-			return "", fmt.Errorf("price %s is inactive", env.get("PRICE_ID"))
-		}
-		return "price active", nil
-	})
+	checks["stripe"] = timed(func() (string, error) { return s.checkPrices(env) })
 	checks["resend"] = timed(func() (string, error) {
 		s.mu.Lock()
 		kind := s.resendKeyKindLocked(env.get("RESEND_API_KEY"))

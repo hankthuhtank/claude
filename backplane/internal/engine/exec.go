@@ -23,7 +23,7 @@ func (e *Engine) StartRun(p *core.Project, env string, plan *core.Plan, confirm 
 	if len(plan.Blockers) > 0 {
 		return nil, &core.Problem{Title: "The plan has blockers", Code: "invalid", Summary: strings.Join(plan.Blockers, " ")}
 	}
-	if plan.Destructive && core.IsProduction(env) && strings.TrimSpace(confirm) != p.Name {
+	if plan.Destructive && core.IsProduction(env) && !p.Practice && strings.TrimSpace(confirm) != p.Name {
 		return nil, fmt.Errorf("%w: type the project name %q to delete production resources", ErrConfirm, p.Name)
 	}
 	man, err := e.Store.LoadManifest(p.ID, env)
@@ -575,7 +575,7 @@ func (e *Engine) Rollback(ctx context.Context, p *core.Project, env, runID, conf
 	if e.isRunning(runID) {
 		return nil, errors.New("cancel the build before rolling it back")
 	}
-	if core.IsProduction(env) && strings.TrimSpace(confirm) != p.Name {
+	if core.IsProduction(env) && !p.Practice && strings.TrimSpace(confirm) != p.Name {
 		return nil, fmt.Errorf("%w: type the project name %q to roll back production", ErrConfirm, p.Name)
 	}
 	snap, err := e.Store.LoadSnapshot(p.ID, env, run.Checkpoint)

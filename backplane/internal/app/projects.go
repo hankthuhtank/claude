@@ -664,7 +664,7 @@ func (a *App) Dashboard(ctx context.Context, p DashboardParams) (*DashboardResul
 		return nil, err
 	}
 	d := &DashboardResult{Project: a.summarize(pr), Env: env, Blueprint: pr.Blueprint, Manifest: man, LevelNames: core.LevelNames,
-		Costs: engine.EstimateCosts(&pr.Blueprint), Uptime: map[string]float64{}, Environment: map[string]core.Health{},
+		Costs: engine.EstimateCostsFor(pr), Uptime: map[string]float64{}, Environment: map[string]core.Health{},
 		Connections: pr.Connections, Answers: pr.Answers}
 	if t, ok := blueprints.Get(pr.TemplateID); ok {
 		d.Template = &t

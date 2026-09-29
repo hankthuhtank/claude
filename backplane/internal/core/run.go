@@ -28,6 +28,7 @@ type Plan struct {
 	Blockers    []string        `json:"blockers,omitempty"` // must be fixed before approval
 	Destructive bool            `json:"destructive"`
 	Production  bool            `json:"production"`
+	Practice    bool            `json:"practice,omitempty"` // runs against the practice simulator
 	Counts      map[string]int  `json:"counts"` // action -> n
 	Inputs      map[string]bool `json:"inputs,omitempty"`
 	// Purpose is shown above the plan ("Repair: Recreate the webhook").

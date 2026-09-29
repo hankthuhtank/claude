@@ -32,6 +32,11 @@ alter table public.orders add column if not exists shipping_name text;
 alter table public.orders add column if not exists shipping_address jsonb;
 alter table public.orders add column if not exists phone text;
 alter table public.orders add column if not exists fulfillment_status text not null default 'unfulfilled';
+-- Products & prices: what was bought (item key, name, quantity) and, for
+-- subscriptions, which Stripe subscription keeps the order active.
+alter table public.orders add column if not exists items jsonb not null default '[]'::jsonb;
+alter table public.orders add column if not exists stripe_subscription_id text;
+create index if not exists orders_subscription_idx on public.orders (stripe_subscription_id);
 create index if not exists orders_email_idx on public.orders (lower(email));
 create index if not exists orders_payment_intent_idx on public.orders (stripe_payment_intent);
 

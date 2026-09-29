@@ -2,7 +2,6 @@ package blueprints
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -16,7 +15,10 @@ type TableSpec struct {
 	Columns []string // SQL column definitions (id, owner_id and created_at are added)
 	// Access: owner (rows belong to the signed-in user), public-read (anyone
 	// may read, owner writes), members (via a membership table), server
-	// (only the Worker's server key; no browser access).
+	// (only the Worker's server key; no browser access), guest (written only
+	// by the Worker for customers with or without an account; the customer
+	// reads their own, staff read and update all), staff-list (anyone reads,
+	// staff write).
 	Access   string
 	Members  string // for Access=members: "<membership table>.<fk column>"
 	Extra    string // extra SQL appended after the table
@@ -75,13 +77,24 @@ var dataTables = map[string][]TableSpec{
 		{Name: "job_photos", Purpose: "Job-site photos", Access: "owner", Columns: []string{"job_id uuid not null", "storage_path text not null", "caption text"}},
 		{Name: "signoffs", Purpose: "Customer sign-offs", Access: "owner", Columns: []string{"job_id uuid not null", "signed_by text not null", "signed_at timestamptz not null default now()"}},
 	},
+	// Booking and Restaurant are ready to sell: services and the menu live in
+	// Products & prices (Stripe + the Worker's catalog); the Worker writes
+	// bookings and orders, so customers don't need an account.
 	"booking": {
-		{Name: "services", Purpose: "Bookable services", Access: "public-read", Columns: []string{"title text not null", "minutes int not null default 30", "deposit_cents bigint not null default 0", "active boolean not null default true"}},
-		{Name: "bookings", Purpose: "Appointments", Access: "owner", Columns: []string{"service_id uuid", "starts_at timestamptz not null", "email text", "status text not null default 'pending'", "paid boolean not null default false", "reminder_sent_at timestamptz", "stripe_session_id text unique"}},
+		staffTable,
+		{Name: "bookings", Purpose: "Appointments", Access: "guest", Realtime: true, Columns: []string{"service_key text not null", "service_name text not null", "starts_at timestamptz not null",
+			"minutes int not null default 30", "email text not null", "customer_name text", "notes text",
+			"status text not null default 'pending' check (status in ('pending','confirmed','canceled','expired'))", "paid boolean not null default false",
+			"deposit_cents bigint not null default 0", "currency text not null default 'usd'", "reminder_sent_at timestamptz", "stripe_session_id text unique", "is_probe boolean not null default false"},
+			Extra: "create unique index if not exists bookings_slot_unique on public.bookings (service_key, starts_at) where status in ('pending','confirmed');\ncreate index if not exists bookings_starts_idx on public.bookings (starts_at);"},
 	},
 	"restaurant": {
-		{Name: "menu_items", Purpose: "Menu", Access: "public-read", Columns: []string{"name text not null", "price_cents bigint not null", "available boolean not null default true"}},
-		{Name: "orders", Purpose: "Customer orders", Access: "owner", Realtime: true, Columns: []string{"items jsonb not null default '[]'::jsonb", "total_cents bigint not null default 0", "status text not null default 'received'", "paid boolean not null default false", "stripe_session_id text unique"}},
+		staffTable,
+		{Name: "orders", Purpose: "Customer orders", Access: "guest", Realtime: true, Columns: []string{"items jsonb not null default '[]'::jsonb", "total_cents bigint not null default 0",
+			"currency text not null default 'usd'", "email text not null", "customer_name text", "notes text", "pickup_at timestamptz",
+			"status text not null default 'awaiting_payment' check (status in ('awaiting_payment','received','preparing','ready','collected','canceled','expired'))",
+			"paid boolean not null default false", "stripe_session_id text unique", "is_probe boolean not null default false"}},
+		{Name: "sold_out", Purpose: "Menu items marked sold out", Access: "staff-list", Columns: []string{"item_key text not null unique"}},
 	},
 	"file-sharing": {
 		{Name: "files", Purpose: "Uploaded files", Access: "owner", Columns: []string{"name text not null", "storage_path text not null", "bytes bigint not null default 0"}},
@@ -125,26 +138,57 @@ var dataTables = map[string][]TableSpec{
 	},
 }
 
+// staffTable lists the people who run the business (kitchen screen, booking
+// calendar). Add rows with the Supabase dashboard or your own admin screen.
+var staffTable = TableSpec{Name: "staff", Purpose: "Staff who see every order or booking", Access: "server",
+	Columns: []string{"user_id uuid not null unique references auth.users (id) on delete cascade", "name text"}}
+
+// dataProducts are the presets on the data engine that sell a catalog.
+var dataProducts = map[string]ProductsSpec{
+	"subscription-saas": {Noun: "plan", Billing: []string{BillMonth, BillYear}, Yearly: true, MaxQuantity: 1, PriceLabel: "Price", Placeholder: "e.g. Pro"},
+	"membership":        {Noun: "membership tier", Billing: []string{BillMonth, BillYear}, Yearly: true, MaxQuantity: 1, PriceLabel: "Price", Placeholder: "e.g. Supporter"},
+	"restaurant":        {Noun: "menu item", Billing: []string{BillOnce}, Quantity: true, MaxQuantity: 20, PriceLabel: "Price", Placeholder: "e.g. Margherita pizza"},
+	"booking":           {Noun: "service", Billing: []string{BillOnce}, MaxQuantity: 1, PriceLabel: "Deposit", Placeholder: "e.g. Haircut", Minutes: true},
+}
+
+// orderPath is the Worker route where customers place an order or booking
+// for presets that sell to guests.
+func orderPath(templateID string) string {
+	switch templateID {
+	case "booking":
+		return "/book"
+	case "restaurant":
+		return "/order"
+	}
+	return ""
+}
+
 func dataQuestions(t Template) []Question {
 	q := []Question{{Key: "app_url", Label: "Your app's web address", Kind: "url", Help: "Used for sign-in redirects, e.g. https://app.example.com."}}
 	if has(t, core.CapEmail) || has(t, core.CapAuth) {
 		q = append(q, Question{Key: "domain", Label: "Email domain", Kind: "domain", Required: has(t, core.CapEmail), Help: "Sign-in and notification emails come from this domain."},
 			Question{Key: "business_name", Label: "Business or app name (shown in emails)", Kind: "text"})
 	}
-	if has(t, core.CapPayments) {
-		label := "Price"
-		if t.ID == "subscription-saas" || t.ID == "membership" {
-			label = "Monthly price"
-		}
-		q = append(q, Question{Key: "price", Label: label, Kind: "money", Default: 19.0}, Question{Key: "currency", Label: "Currency", Kind: "select", Default: "usd", Options: []string{"usd", "eur", "gbp", "cad", "aud"}})
+	if spec, ok := dataProducts[t.ID]; ok {
+		q = append([]Question{productsQuestion(spec)}, q...)
+		q = append(q, currencyQ)
+	}
+	if orderPath(t.ID) != "" {
+		q = append(q, Question{Key: "support_email", Label: "Support email", Kind: "email", Help: "Customers reply here."})
 	}
 	q = append(q, Question{Key: "include_github", Label: "Keep the code in GitHub and deploy automatically", Kind: "toggle", Default: true},
-		Question{Key: "region", Label: "Database region", Kind: "select", Default: "us-east-1", Advanced: true, Options: []string{"us-east-1", "us-west-1", "eu-west-1", "eu-central-1", "ap-southeast-1", "ap-northeast-1", "sa-east-1"}},
+		Question{Key: "region", Label: "Database region", Kind: "select", Default: "us-east-1", Advanced: true, Options: regions},
 		Question{Key: "workers_subdomain", Label: "workers.dev subdomain (only if your account has none)", Kind: "text", Advanced: true})
 	return q
 }
 
 func dataFlow(t Template) []string {
+	switch t.ID {
+	case "booking":
+		return []string{"Customer books", "Cloudflare Worker", "Stripe deposit", "Webhook", "Supabase Bookings", "Resend Confirmation", "Reminder the day before"}
+	case "restaurant":
+		return []string{"Customer orders", "Cloudflare Worker", "Stripe", "Webhook", "Supabase Orders", "Kitchen screen (live)", "Resend Confirmation"}
+	}
 	flow := []string{"Your app"}
 	if has(t, core.CapAuth) {
 		flow = append(flow, "Supabase Auth")
@@ -177,7 +221,13 @@ func schemaSQL(t Template) (string, []string, int) {
 	for _, tb := range tables {
 		names = append(names, tb.Name)
 		fmt.Fprintf(&b, "create table if not exists public.%s (\n  id uuid primary key default gen_random_uuid(),\n", tb.Name)
-		if tb.Access != "server" {
+		switch tb.Access {
+		case "server", "staff-list":
+		case "guest":
+			// Guests have no account: the Worker writes the row; a signed-in
+			// customer's id is recorded so they can see their own.
+			b.WriteString("  owner_id uuid default auth.uid() references auth.users (id) on delete set null,\n")
+		default:
 			b.WriteString("  owner_id uuid not null default auth.uid() references auth.users (id) on delete cascade,\n")
 		}
 		for _, c := range tb.Columns {
@@ -185,7 +235,7 @@ func schemaSQL(t Template) (string, []string, int) {
 		}
 		b.WriteString("  created_at timestamptz not null default now()\n);\n")
 		fmt.Fprintf(&b, "alter table public.%s enable row level security;\n", tb.Name)
-		if tb.Access != "server" {
+		if tb.Access != "server" && tb.Access != "staff-list" {
 			fmt.Fprintf(&b, "create index if not exists %s_owner_idx on public.%s (owner_id);\n", tb.Name, tb.Name)
 		}
 		pol := func(name, cmd, using, check string) {
@@ -222,6 +272,17 @@ func schemaSQL(t Template) (string, []string, int) {
 			pol(tb.Name+": members read", "select", member+" or "+own, "")
 			pol(tb.Name+": members write", "insert", "", "("+member+") and "+own)
 			pol(tb.Name+": authors delete", "delete", own, "")
+		case "guest":
+			staff := "exists (select 1 from public.staff s where s.user_id = (select auth.uid()))"
+			pol(tb.Name+": customers read their own, staff read all", "select", own+" or "+staff, "")
+			pol(tb.Name+": staff update", "update", staff, staff)
+		case "staff-list":
+			staff := "exists (select 1 from public.staff s where s.user_id = (select auth.uid()))"
+			fmt.Fprintf(&b, "drop policy if exists \"%s: anyone reads\" on public.%s;\n", tb.Name, tb.Name)
+			fmt.Fprintf(&b, "create policy \"%s: anyone reads\" on public.%s for select to anon, authenticated using (true);\n", tb.Name, tb.Name)
+			policies++
+			pol(tb.Name+": staff add", "insert", "", staff)
+			pol(tb.Name+": staff remove", "delete", staff, "")
 		case "server-members":
 			active := "exists (select 1 from public.subscriptions s where s.owner_id = (select auth.uid()) and s.status in ('active','trialing'))"
 			pol(tb.Name+": active members read published", "select", "published and "+active, "")
@@ -289,21 +350,49 @@ func buildData(t Template, projectName string, a Answers) (core.Blueprint, error
 	withPay := has(t, core.CapPayments)
 	withGitHub := a.boolean("include_github", true)
 	subscription := t.ID == "subscription-saas" || t.ID == "membership"
-	cents := int64(math.Round(a.num("price", 19) * 100))
+	currency := a.str("currency", "usd")
+	var items []Item
+	if withPay && t.ProductsSpec() != nil {
+		var err error
+		if items, err = Items(t, a, projectName); err != nil {
+			return core.Blueprint{}, err
+		}
+	}
+	var cents int64
+	if len(items) > 0 {
+		cents = items[0].Cents()
+	}
+	guestOrders := orderPath(t.ID) != ""
 	isoTable, isoColumn := isolationTable(t)
 	params := map[string]any{
 		"project_name": projectName, "slug": slug, "app_url": appURL, "domain": domain, "business_name": business,
 		"from_email": business + " <notifications@" + domain + ">", "region": a.str("region", "us-east-1"), "include_github": withGitHub,
 		"github_repo": a.str("github_repo", slug+"-backend"), "workers_subdomain": a.str("workers_subdomain", ""), "compatibility_date": CompatibilityDate,
-		"price_cents": cents, "currency": a.str("currency", "usd"), "template": t.ID, "isolation_table": isoTable, "isolation_column": isoColumn,
-		"subscription": subscription, "product_name": projectName,
+		"price_cents": cents, "currency": currency, "template": t.ID, "isolation_table": isoTable, "isolation_column": isoColumn,
+		"subscription": subscription, "product_name": projectName, "order_path": orderPath(t.ID), "support_email": a.str("support_email", ""),
+	}
+	if len(items) > 0 {
+		params["catalog_items"] = ItemsAnswer(items)
 	}
 	bp := core.Blueprint{Version: 1, TemplateID: t.ID, Params: params}
 	bp.Components = []core.Component{{Key: "app", Label: "Your app", Role: "Web or mobile client", External: true, Order: 0}}
+	switch t.ID {
+	case "booking":
+		bp.Components[0] = core.Component{Key: "app", Label: "Booking page", Role: "Your site or app", External: true, Order: 0}
+	case "restaurant":
+		bp.Components[0] = core.Component{Key: "app", Label: "Order page", Role: "Your site or app", External: true, Order: 0}
+	}
 	order := 1
 	if withPay {
+		breaks := []string{"Payments", "Subscription status updates"}
+		switch t.ID {
+		case "booking":
+			breaks = []string{"Deposits", "Booking confirmations"}
+		case "restaurant":
+			breaks = []string{"Online payments", "Order confirmations"}
+		}
 		bp.Components = append(bp.Components, core.Component{Key: "stripe", Label: "Stripe", Role: "Payments", Capability: core.CapPayments, Provider: "stripe", Order: order,
-			Resources: []string{"product", "price", "webhook"}, Breaks: []string{"Payments", "Subscription status updates"}})
+			Resources: []string{"webhook"}, Breaks: breaks})
 		order++
 	}
 	bp.Components = append(bp.Components, core.Component{Key: "api", Label: "Cloudflare Worker", Role: "Server-side API", Capability: core.CapAPI, Provider: "cloudflare", Order: order,
@@ -379,25 +468,26 @@ func buildData(t Template, projectName string, a Answers) (core.Blueprint, error
 		}
 	}
 	if withPay {
-		R(core.ResourceSpec{Key: "product", Kind: "stripe.product", Provider: "stripe", Component: "stripe", Name: projectName, Title: "Stripe product “" + projectName + "”",
-			Props: map[string]any{"name": "{{param:project_name}}"}})
-		priceProps := map[string]any{"product": "{{out:product.id}}", "unit_amount": cents, "currency": "{{param:currency}}"}
-		title := "One-time price " + moneyLabel(cents, a.str("currency", "usd"))
-		if subscription {
-			priceProps["interval"] = "month"
-			title = "Monthly price " + moneyLabel(cents, a.str("currency", "usd"))
-		}
-		R(core.ResourceSpec{Key: "price", Kind: "stripe.price", Provider: "stripe", Component: "stripe", Name: projectName, Title: title, Props: priceProps})
 		secrets["STRIPE_SECRET_KEY"] = "{{conn:stripe.worker_key}}"
-		vars["PRICE_ID"] = "{{out:price.id}}"
 		vars["BILLING_MODE"] = pick(subscription, "subscription", "payment")
-		deps = append(deps, "price")
+		if len(items) > 0 {
+			spec := t.ProductsSpec()
+			priceKeys := addCatalog(&bp, items, currency, "stripe")
+			vars["CATALOG"] = catalogVar(items, currency)
+			vars["PRICE_ID"] = "{{out:" + PriceKey(items[0].Key, items[0].Billing) + ".id}}"
+			vars["MAX_QUANTITY"] = strconv.Itoa(max(1, spec.MaxQuantity))
+			vars["CART"] = strconv.FormatBool(spec.Quantity)
+			deps = append(deps, priceKeys...)
+		}
+		if guestOrders {
+			vars["SUPPORT_EMAIL"] = "{{param:support_email}}"
+		}
 	}
 	bindings := []any{map[string]any{"type": "kv_namespace", "name": "PROBES", "namespace_id": "{{out:probes.id}}", "purpose": "Probes and rate limits"}}
 	R(core.ResourceSpec{Key: "api", Kind: "cloudflare.worker", Provider: "cloudflare", Component: "api", Name: name("-api"), Title: "Worker API", DependsOn: deps,
 		Props: map[string]any{"name": name("-api"), "code": "{{code:worker/src/index.js}}", "compatibility_date": CompatibilityDate, "bindings": bindings, "vars": vars, "secrets": secrets,
 			"crons": []any{"*/30 * * * *"}, "workers_dev": true, "subdomain_resource": "subdomain",
-			"purposes": map[string]any{"SUPABASE_SECRET_KEY": "Server-side data access", "PROBES": "Probes", "RESEND_API_KEY": "Notification emails", "STRIPE_SECRET_KEY": "Payments"}}})
+			"purposes": map[string]any{"SUPABASE_SECRET_KEY": "Server-side data access", "PROBES": "Probes", "RESEND_API_KEY": "Notification emails", "STRIPE_SECRET_KEY": "Payments", "CATALOG": "Checkout"}}})
 	if withPay {
 		events := []any{"checkout.session.completed", "checkout.session.expired", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted", "invoice.payment_failed"}
 		R(core.ResourceSpec{Key: "webhook", Kind: "stripe.webhook_endpoint", Provider: "stripe", Component: "stripe", Name: "Worker webhook", Title: "Webhook → Worker", DependsOn: []string{"api"},
@@ -430,7 +520,13 @@ func buildData(t Template, projectName string, a Answers) (core.Blueprint, error
 			L(core.LinkSpec{Key: "db_email", From: "db", To: "email", Label: "Sign-in emails (SMTP)", Kind: "smtp", Check: "supabase_smtp", Critical: true, Breaks: []string{"Sign-in and notification emails"}})
 		}
 	}
-	if withPay {
+	if withPay && guestOrders {
+		L(core.LinkSpec{Key: "app_api", From: "app", To: "api", Label: pick(t.ID == "booking", "Book → "+orderPath(t.ID), "Order → "+orderPath(t.ID)), Kind: "http", Check: "catalog_endpoint", Critical: true,
+			Breaks: []string{pick(t.ID == "booking", "Online booking", "Online ordering")}})
+		L(core.LinkSpec{Key: "api_stripe", From: "api", To: "stripe", Label: "Creates checkout", Kind: "http", Check: "worker_probe:stripe", Critical: true, Breaks: []string{"Payments"}})
+		L(core.LinkSpec{Key: "stripe_api", From: "stripe", To: "api", Label: "checkout.session.completed", Kind: "webhook", Check: "stripe_webhook", Critical: true,
+			Breaks: []string{pick(t.ID == "booking", "Booking confirmations", "Order confirmations")}})
+	} else if withPay {
 		L(core.LinkSpec{Key: "app_api", From: "app", To: "api", Label: "Checkout / billing", Kind: "http", Check: "checkout_data", Critical: true, Breaks: []string{"Payments"}})
 		L(core.LinkSpec{Key: "api_stripe", From: "api", To: "stripe", Label: "Creates checkout", Kind: "http", Check: "worker_probe:stripe", Critical: true, Breaks: []string{"Payments"}})
 		L(core.LinkSpec{Key: "stripe_api", From: "stripe", To: "api", Label: pick(subscription, "customer.subscription.*", "checkout.session.completed"), Kind: "webhook", Check: "stripe_webhook", Critical: true, Breaks: []string{"Subscription status updates"}})
@@ -442,9 +538,23 @@ func buildData(t Template, projectName string, a Answers) (core.Blueprint, error
 		bp.Scenarios = []core.ScenarioSpec{{Key: "isolation", Title: "Each user sees only their own data", Check: "data_isolation",
 			Steps: []string{"Create two temporary users", "User A saves a record", "User A reads it back", "User B cannot see it", "A visitor without an account cannot see it", "Temporary users removed"}}}
 	}
+	switch {
+	case t.ID == "booking" && len(items) > 0:
+		bp.Scenarios = append(bp.Scenarios, core.ScenarioSpec{Key: "order", Title: "Customer books and pays a deposit", Check: "catalog_order",
+			Steps: []string{"Customer picks a service and time", "Booking held while they pay", "Deposit paid", "Stripe webhook fires", "Booking confirmed in the database", "Confirmation email sent", "Everything verified"}})
+	case t.ID == "restaurant" && len(items) > 0:
+		bp.Scenarios = append(bp.Scenarios, core.ScenarioSpec{Key: "order", Title: "Customer orders and pays", Check: "catalog_order",
+			Steps: []string{"Customer fills a cart", "Order recorded at menu prices", "Payment", "Stripe webhook fires", "Order sent to the kitchen", "Confirmation email sent", "Everything verified"}})
+	}
 	bp.Generated = []core.GeneratedFileSpec{{Path: "worker/src/index.js", Role: "generated", Language: "javascript"}, {Path: "worker/wrangler.jsonc", Role: "system-config", Language: "jsonc"},
 		{Path: "supabase/schema.sql", Role: "generated", Language: "sql"}, {Path: "README.md", Role: "generated", Language: "markdown"}}
 	bp.Notes = append(bp.Notes, "Every table has row-level security; the generated policies let each signed-in user reach only their own rows.")
+	if len(items) > 0 {
+		bp.Notes = append(bp.Notes, "Sells: "+catalogSummary(items, currency)+". The Worker only accepts these items; prices always come from Stripe.")
+	}
+	if guestOrders {
+		bp.Notes = append(bp.Notes, "Customers don't need an account: the Worker records "+pick(t.ID == "booking", "bookings", "orders")+". Add your team to the staff table so they can see all of them.")
+	}
 	return bp, bp.ValidateGraph()
 }
 

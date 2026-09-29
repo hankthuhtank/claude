@@ -97,7 +97,7 @@ func scenarioPurchase(c *Checker, sc *core.ScenarioSpec) core.CheckResult {
 			"id": sessionID, "object": "checkout.session", "livemode": false, "mode": "payment", "status": "complete", "payment_status": "paid",
 			"amount_total": amount, "currency": currency, "customer": nil,
 			"customer_details": map[string]any{"email": resend.TestDelivered, "name": "Backplane Probe", "phone": "+15555550100"},
-			"metadata":         map[string]any{"backplane_probe": "1", "backplane_probe_object": objectKey, "backplane_probe_id": probeID},
+			"metadata":         probeMeta(c, objectKey, probeID),
 			"payment_intent":   "pi_test_bp" + probeID,
 		}},
 	}
@@ -279,6 +279,16 @@ func scenarioPurchase(c *Checker, sc *core.ScenarioSpec) core.CheckResult {
 		res.Summary = "The journey works with a warning."
 	}
 	return res
+}
+
+// probeMeta is the synthetic session's metadata: the probe markers plus the
+// first catalog item, exactly as the Worker's /checkout records it.
+func probeMeta(c *Checker, objectKey, probeID string) map[string]any {
+	m := map[string]any{"backplane_probe": "1", "backplane_probe_object": objectKey, "backplane_probe_id": probeID}
+	if items := Catalog(&c.P.Blueprint); len(items) > 0 {
+		m["items"], m["item_keys"] = items[0].Name, items[0].Key+":1"
+	}
+	return m
 }
 
 // tamper flips the last character of the token in a download URL.

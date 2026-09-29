@@ -32,6 +32,7 @@ type lastChecks struct {
 type MonitorState struct {
 	Enabled   bool       `json:"enabled"`
 	Active    bool       `json:"active"` // the monitor loop is running
+	Paused    bool       `json:"paused"` // practice backend while the sandbox is off
 	LastQuick *time.Time `json:"lastQuick,omitempty"`
 	LastFull  *time.Time `json:"lastFull,omitempty"`
 	NextQuick *time.Time `json:"nextQuick,omitempty"`
@@ -226,11 +227,12 @@ func (m *Monitor) state(p *core.Project, env string) MonitorState {
 	case !p.Monitor.Enabled:
 		st.Note = "Monitoring is off for this project."
 	case p.Practice && !m.a.practiceRunning():
-		st.Note = "Practice projects are monitored while the practice sandbox is running."
+		st.Paused = true
+		st.Note = "Checks paused — practice mode is off. They resume when you start it."
 	case !active:
 		st.Note = "Checks run while Backplane is open" + map[bool]string{true: " and from the Windows background task.", false: "."}[m.a.Store.LoadSettings().BackgroundTask]
 	}
-	if p.Monitor.Enabled {
+	if p.Monitor.Enabled && (!p.Practice || m.a.practiceRunning()) {
 		if p.Monitor.QuickEveryMin > 0 {
 			t := lc.quick.Add(time.Duration(p.Monitor.QuickEveryMin) * time.Minute)
 			if t.Before(time.Now()) {

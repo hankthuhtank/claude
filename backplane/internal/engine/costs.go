@@ -47,6 +47,22 @@ var pricing = map[string]core.CostLine{
 	"aws":         {Estimate: "Usage-based", Basis: "Most services have a free tier for the first 12 months or an always-free allowance.", Upgrade: "Varies by service.", Source: "aws.amazon.com/pricing (2026)"},
 }
 
+// EstimateCostsFor is EstimateCosts for a project. Practice backends run on
+// the built-in simulator, so they cost nothing and say so instead of showing
+// real-world price tables.
+func EstimateCostsFor(p *core.Project) []core.CostLine {
+	if p.Practice {
+		var names []string
+		for _, prov := range p.Blueprint.Providers() {
+			names = append(names, providers.DisplayName(prov))
+		}
+		return []core.CostLine{{Provider: "Practice", Estimate: "Free — simulated",
+			Basis:   "Runs on Backplane's built-in simulator of " + strings.Join(names, ", ") + " on this computer. No accounts, no charges.",
+			Upgrade: "Build the same preset without “Practice run” to see real monthly estimates."}}
+	}
+	return EstimateCosts(&p.Blueprint)
+}
+
 // EstimateCosts lists an estimate for every provider in the blueprint.
 func EstimateCosts(bp *core.Blueprint) []core.CostLine {
 	var out []core.CostLine

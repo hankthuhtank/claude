@@ -125,13 +125,13 @@ func checkStripeWebhook(c *Checker, l *core.LinkSpec) core.CheckResult {
 		return res
 	}
 	// Real delivery test.
-	price := c.resourceOf(stripe.KindPrice)
-	if price == nil || c.State(price.Key) == nil || workerURL == "" {
+	price, mode := c.probePrice()
+	if price == nil || workerURL == "" {
 		return res
 	}
 	probeID := randomID()
 	start := time.Now()
-	cs, err := stripe.CreateCheckoutSession(c.ctx, conn, c.State(price.Key).ID, workerURL+"/thanks?probe=1",
+	cs, err := stripe.CreateCheckoutSessionMode(c.ctx, conn, c.State(price.Key).ID, mode, workerURL+"/thanks?probe=1",
 		map[string]string{"backplane_probe": "1", "backplane_probe_id": probeID}, "bp-probe-"+probeID)
 	if err != nil {
 		res.Health = core.HealthFail
@@ -201,7 +201,21 @@ func checkCheckout(c *Checker, l *core.LinkSpec) core.CheckResult {
 		return res
 	}
 	token, _ := c.Gen("probe_token")
-	resp, err = c.workerCall("POST", "/checkout", []byte(`{}`), http.Header{"Accept": {"application/json"}, "X-Backplane-Probe": {token}})
+	// Customers can only name an item and a quantity. Unknown items are
+	// refused, and a price or amount sent from the browser is ignored.
+	_, uerr := c.workerCall("POST", "/checkout", []byte(`{"items":[{"key":"bp_no_such_item","quantity":1}]}`), http.Header{"Accept": {"application/json"}, "Content-Type": {"application/json"}}, true)
+	if uerr == nil {
+		return core.CheckResult{Health: core.HealthFail, Summary: "Checkout accepted an item that isn't for sale.",
+			Problem: &core.Problem{Title: "CHECKOUT ACCEPTS UNKNOWN ITEMS", Code: "drift", Summary: "The Worker's /checkout created a session for an item that isn't in the catalog. The deployed code is not the version Backplane generated; rebuild the Worker.",
+				Fixes: []core.Fix{{ID: "reapply:" + workerKeyOf(c), Label: "Redeploy the generated Worker", Automatic: true, Action: "repair", Target: workerKeyOf(c)}}}}
+	}
+	body := []byte(`{}`)
+	var expect int64
+	if items := Catalog(&c.P.Blueprint); len(items) > 0 {
+		body, _ = json.Marshal(map[string]any{"items": []any{map[string]any{"key": items[0].Key, "quantity": 1, "price": "price_from_browser", "amount": 1, "unit_amount": 1}}, "amount": 1})
+		expect = items[0].Cents()
+	}
+	resp, err = c.workerCall("POST", "/checkout", body, http.Header{"Accept": {"application/json"}, "Content-Type": {"application/json"}, "X-Backplane-Probe": {token}})
 	if err != nil {
 		return core.CheckResult{Health: core.HealthFail, Summary: "The Worker could not create a checkout session.",
 			Problem: &core.Problem{Title: "CHECKOUT BROKEN", Provider: "stripe", Code: "drift", Summary: "Calling the Worker's /checkout failed: " + err.Error() + ". The Worker's Stripe key or price may be wrong.",
@@ -218,8 +232,16 @@ func checkCheckout(c *Checker, l *core.LinkSpec) core.CheckResult {
 	}
 	if conn := c.Conn("stripe"); conn != nil {
 		c.Defer(func(ctx2 contextLike) error { return stripe.ExpireCheckoutSession(ctx2, conn, out.ID) })
+		if expect > 0 {
+			if cs, err := stripe.GetCheckoutSession(c.ctx, conn, out.ID); err == nil && cs.AmountTotal != expect {
+				return core.CheckResult{Health: core.HealthFail, Summary: "Checkout charged a price sent by the browser.",
+					Expected: stripe.Money(expect, cs.Currency), Actual: stripe.Money(cs.AmountTotal, cs.Currency),
+					Problem: &core.Problem{Title: "PRICES NOT ENFORCED", Code: "drift", Summary: "A checkout request carrying its own amount produced a session for " + stripe.Money(cs.AmountTotal, cs.Currency) + " instead of the catalog price. Rebuild the Worker so prices only come from Stripe.",
+						Fixes: []core.Fix{{ID: "reapply:" + workerKeyOf(c), Label: "Redeploy the generated Worker", Automatic: true, Action: "repair", Target: workerKeyOf(c)}}}}
+			}
+		}
 	}
-	res.Summary = "Customers can start checkout (Worker created Stripe session " + out.ID + ", expired afterwards)"
+	res.Summary = "Customers can start checkout at catalog prices; unknown items and browser-sent prices are refused (session " + out.ID + " expired afterwards)"
 	return res
 }
 
@@ -618,11 +640,16 @@ func synthAuth(c *Checker) core.CheckResult {
 	return res
 }
 
+func workerKeyOf(c *Checker) string {
+	_, key := c.WorkerURL()
+	return key
+}
+
 func synthCheckout(c *Checker) core.CheckResult {
 	res := core.CheckResult{Target: c.componentOf(stripe.KindPrice)}
 	conn := c.Conn("stripe")
-	price := c.resourceOf(stripe.KindPrice)
-	if conn == nil || price == nil || c.State(price.Key) == nil {
+	price, mode := c.probePrice()
+	if conn == nil || price == nil {
 		res.Health, res.Summary = core.HealthUnknown, "Payments not built yet."
 		return res
 	}
@@ -632,7 +659,7 @@ func synthCheckout(c *Checker) core.CheckResult {
 	}
 	url, _ := c.WorkerURL()
 	start := time.Now()
-	cs, err := stripe.CreateCheckoutSession(c.ctx, conn, c.State(price.Key).ID, orStr(url, "https://example.com")+"/thanks", map[string]string{"backplane_probe": "1"}, "bp-synth-"+randomID())
+	cs, err := stripe.CreateCheckoutSessionMode(c.ctx, conn, c.State(price.Key).ID, mode, orStr(url, "https://example.com")+"/thanks", map[string]string{"backplane_probe": "1"}, "bp-synth-"+randomID())
 	if err != nil {
 		res.Health = core.HealthFail
 		res.Problem = providers.Translate("stripe", "create a checkout session", err)

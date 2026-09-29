@@ -159,6 +159,10 @@ func (a *App) AddConnection(ctx context.Context, p AddConnectionParams) (*AddCon
 
 // verifyInto runs Level 1 verification and updates the connection record.
 func (a *App) verifyInto(ctx context.Context, c *core.Connection) *providers.VerifyResult {
+	if c.Practice && !a.practiceRunning() {
+		c.Status, c.StatusNote, c.VerifiedAt = core.HealthOff, practiceOffNote, nil
+		return &providers.VerifyResult{Health: core.HealthOff, Summary: practiceOffNote}
+	}
 	prov, _ := a.Reg.Provider(c.Provider)
 	conn, err := a.Engine.OpenConn(*c, core.LogEntry{})
 	var vr *providers.VerifyResult

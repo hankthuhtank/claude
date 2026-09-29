@@ -76,11 +76,13 @@ export function Project({ id, env: env0, tab: tab0, autoplan, runId, plan: plan0
             <Led h={envState.overall} lg busy={building} />
             <b style="font-family:var(--display);letter-spacing:.08em;text-transform:uppercase">{building ? "Building…" : envState.headline}</b>
             <span class="small muted">{envState.checkedAt ? "checked " + ago(envState.checkedAt) : ""}</span>
-            {dash.monitor?.enabled ? <span class="small muted">· monitored{dash.monitor.nextQuick ? `, next check ${when(dash.monitor.nextQuick)}` : ""}</span> : <span class="small muted">· monitoring off</span>}
+            {!dash.monitor?.enabled ? <span class="small muted">· monitoring off</span>
+              : dash.monitor.paused ? <span class="small muted">· checks paused while practice mode is off</span>
+              : <span class="small muted">· monitored{dash.monitor.nextQuick ? `, next check ${when(dash.monitor.nextQuick)}` : ""}</span>}
           </div>
         </div>
         <div class="stack" style="gap:8px;justify-items:end">
-          {p.environments.length > 1 ? <Seg label="Environment" value={env} onChange={(e) => { setEnv(e); setPlan(null); setActiveRun(null); }} options={p.environments.map((e) => [e.name, e.name])} /> : <span class={`stamp ${env === "production" ? "prod" : ""}`}>{env}</span>}
+          {p.environments.length > 1 ? <Seg label="Environment" value={env} onChange={(e) => { setEnv(e); setPlan(null); setActiveRun(null); }} options={p.environments.map((e) => [e.name, e.name])} /> : <EnvStamp env={env} practice={p.practice} />}
           <div class="row">
             {!p.imported ? <Btn icon="bolt" busy={planBusy} disabled={building} onClick={() => makePlan()}>Plan build</Btn> : null}
             <Btn kind="primary" icon="shield" disabled={building || !envState.built} onClick={() => setTab("health")}>Certify</Btn>
@@ -124,6 +126,12 @@ export function Project({ id, env: env0, tab: tab0, autoplan, runId, plan: plan0
       {tab === "settings" ? <SettingsTab dash={dash} project={p} env={env} reload={reload} onPlan={(pl) => { setPlan(pl); setTab("build"); }} /> : null}
     </div>
   );
+}
+
+/** Environment stamp: practice backends never look like production. */
+export function EnvStamp({ env, practice }) {
+  if (practice) return <span class="stamp practice" title={`Practice · ${env}`}>Practice</span>;
+  return <span class={`stamp ${env === "production" ? "prod" : ""}`}>{env}</span>;
 }
 
 // ---- build ----

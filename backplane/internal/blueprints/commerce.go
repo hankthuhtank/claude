@@ -2,7 +2,6 @@ package blueprints
 
 import (
 	"fmt"
-	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -145,17 +144,25 @@ func providerLabel(id string) string {
 
 func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, error) {
 	slug := Slug(a.str("slug", projectName)) // stored at creation so renames never rename resources
-	product := a.str("product_name", projectName)
+	items, err := Items(t, a, projectName)
+	if err != nil {
+		return core.Blueprint{}, err
+	}
+	spec := t.ProductsSpec()
+	currency := a.str("currency", "usd")
+	business := cleanText(a.str("business_name", projectName), 80)
+	// One item: emails and pages name it. Several: they name the business
+	// and list what was bought.
+	product := business
+	if len(items) == 1 {
+		product = items[0].Name
+	}
 	domain := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(a.str("domain", ""), "https://"), "http://"))
 	domain = strings.TrimSuffix(domain, "/")
 	if domain == "" {
 		return core.Blueprint{}, fmt.Errorf("an email domain is required (receipts are sent from it)")
 	}
-	price := a.num("price", 29)
-	cents := int64(math.Round(price * 100))
-	if cents < 50 {
-		return core.Blueprint{}, fmt.Errorf("Stripe's minimum charge is about $0.50")
-	}
+	cents := items[0].Cents()
 	mode := t.Mode
 	license := "none"
 	if mode == "license" {
@@ -163,7 +170,6 @@ func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, e
 	}
 	fromEmail := a.str("from_email", "orders@"+domain)
 	support := a.str("support_email", fromEmail)
-	business := a.str("business_name", product)
 	site := strings.TrimSuffix(a.str("site_origin", ""), "/")
 	fileKey := "releases/" + slug + "/product.bin"
 	if f := a.str("product_file", ""); f != "" {
@@ -173,7 +179,7 @@ func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, e
 	withGitHub := a.boolean("include_github", true)
 	repo := a.str("github_repo", slug+"-backend")
 	params := map[string]any{
-		"project_name": projectName, "slug": slug, "product_name": product, "price_cents": cents, "currency": a.str("currency", "usd"),
+		"project_name": projectName, "slug": slug, "product_name": product, "price_cents": cents, "currency": currency, "catalog_items": ItemsAnswer(items),
 		"business_name": business, "domain": domain, "from_email": business + " <" + fromEmail + ">", "support_email": support,
 		"site_origin": site, "success_url": a.str("success_url", ""), "cancel_url": a.str("cancel_url", site),
 		"download_ttl_hours": strconv.Itoa(int(a.num("download_ttl_hours", 72))), "max_downloads": strconv.Itoa(int(a.num("max_downloads", 10))),
@@ -188,7 +194,7 @@ func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, e
 	bp.Components = []core.Component{
 		{Key: "customer", Label: "Customer checkout", Role: "Buy button on your site", External: true, Order: 0},
 		{Key: "stripe", Label: "Stripe", Role: "Takes the payment", Capability: core.CapPayments, Provider: "stripe", Order: 1,
-			Resources: []string{"product", "price", "webhook"}, Breaks: []string{"Payments", "Refunds", "Webhook configuration"}},
+			Resources: []string{"webhook"}, Breaks: []string{"Payments", "Refunds", "Webhook configuration"}},
 		{Key: "api", Label: "Cloudflare Worker", Role: "Your API", Capability: core.CapAPI, Provider: "cloudflare", Order: 2,
 			Resources: []string{"subdomain", "api", "api_webhook_secret", "api_resend_secret"}, Breaks: []string{"Checkout", "Order processing", "Download delivery"}},
 		{Key: "db", Label: "Supabase", Role: "Orders database", Capability: core.CapDatabase, Provider: "supabase", Order: 3,
@@ -241,11 +247,8 @@ func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, e
 		Title: "Dedicated secret key for the Worker", DependsOn: []string{"db"},
 		Props: map[string]any{"name": "backplane_worker", "project_ref": "{{out:db.ref}}", "why": "A separate key you can revoke without touching anything else."},
 		Count: []core.CountItem{{N: 1, Noun: "secret key"}}})
-	R(core.ResourceSpec{Key: "product", Kind: "stripe.product", Provider: "stripe", Component: "stripe", Name: product, Title: "Stripe product “" + product + "”",
-		Props: map[string]any{"name": "{{param:product_name}}", "description": a.str("description", "")}})
-	R(core.ResourceSpec{Key: "price", Kind: "stripe.price", Provider: "stripe", Component: "stripe", Name: product,
-		Title: fmt.Sprintf("One-time price %s", moneyLabel(cents, a.str("currency", "usd"))),
-		Props: map[string]any{"product": "{{out:product.id}}", "unit_amount": cents, "currency": "{{param:currency}}", "nickname": product + " one-time"}})
+	priceKeys := addCatalog(&bp, items, currency, "stripe")
+	first := PriceKey(items[0].Key, items[0].Billing)
 	R(core.ResourceSpec{Key: "email_domain", Kind: "resend.domain", Provider: "resend", Component: "email", Name: domain, Title: "Sending domain " + domain,
 		Props: map[string]any{"name": "{{param:domain}}", "auto_dns": true, "wait_seconds": 90, "why": "Receipts come from your own domain, with SPF and DKIM so they reach inboxes."}})
 	R(core.ResourceSpec{Key: "email_key", Kind: "resend.api_key", Provider: "resend", Component: "email", Name: name("-worker"), Title: "Send-only email key for the Worker",
@@ -262,14 +265,15 @@ func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, e
 		"BACKPLANE_PROBE_TOKEN":   "{{gen:probe_token}}",
 	}
 	vars := map[string]any{
-		"WORKER_NAME": name("-api"), "PRODUCT_NAME": "{{param:product_name}}", "PRODUCT_FILE_KEY": "{{param:product_file_key}}", "PRICE_ID": "{{out:price.id}}",
+		"WORKER_NAME": name("-api"), "PRODUCT_NAME": "{{param:product_name}}", "PRODUCT_FILE_KEY": "{{param:product_file_key}}", "PRICE_ID": "{{out:" + first + ".id}}",
+		"CATALOG": catalogVar(items, currency), "MAX_QUANTITY": strconv.Itoa(max(1, spec.MaxQuantity)), "CART": strconv.FormatBool(spec.Quantity),
 		"SUPABASE_URL": "{{out:db.url}}", "FROM_EMAIL": "{{param:from_email}}", "SUPPORT_EMAIL": "{{param:support_email}}", "BUSINESS_NAME": "{{param:business_name}}",
 		"SITE_ORIGIN": "{{param:site_origin}}", "SUCCESS_URL": "{{param:success_url}}", "CANCEL_URL": "{{param:cancel_url}}", "DOWNLOAD_TTL_HOURS": "{{param:download_ttl_hours}}",
 		"MAX_DOWNLOADS": "{{param:max_downloads}}", "LICENSE_MODE": "{{param:license_mode}}", "FULFILLMENT_MODE": "{{param:fulfillment_mode}}",
 		"SHIP_COUNTRIES": "{{param:ship_countries}}", "RESEND_TEMPLATE_PURCHASE": "{{out:email_purchase.id}}", "CODE_VERSION": "{{codever:worker/src/index.js}}",
 	}
 	bindings := []any{map[string]any{"type": "kv_namespace", "name": "PROBES", "namespace_id": "{{out:probes.id}}", "purpose": "Stripe delivery probes"}}
-	deps := []string{"subdomain", "probes", "schema", "db_key", "price", "email_key", "email_purchase"}
+	deps := append([]string{"subdomain", "probes", "schema", "db_key", "email_key", "email_purchase"}, priceKeys...)
 	if mode != "shipping" {
 		bindings = append(bindings, map[string]any{"type": "r2_bucket", "name": "DOWNLOADS", "bucket_name": "{{out:downloads.name}}", "purpose": "Secure download delivery"})
 		deps = append(deps, "downloads")
@@ -279,10 +283,14 @@ func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, e
 		Props: map[string]any{"name": name("-api"), "code": "{{code:worker/src/index.js}}", "compatibility_date": CompatibilityDate, "bindings": bindings, "vars": vars, "secrets": secrets,
 			"crons": []any{"17 3 * * *"}, "workers_dev": true, "subdomain_resource": "subdomain",
 			"purposes": map[string]any{"DOWNLOADS": "Secure download delivery", "PROBES": "Stripe delivery probes", "STRIPE_SECRET_KEY": "Checkout", "SUPABASE_SECRET_KEY": "Order records",
-				"RESEND_API_KEY": "Receipt emails", "DOWNLOAD_SIGNING_SECRET": "Download links", "BACKPLANE_PROBE_TOKEN": "Health checks", "PRICE_ID": "Checkout", "SUPABASE_URL": "Order records"},
+				"RESEND_API_KEY": "Receipt emails", "DOWNLOAD_SIGNING_SECRET": "Download links", "BACKPLANE_PROBE_TOKEN": "Health checks", "PRICE_ID": "Checkout", "CATALOG": "Checkout", "SUPABASE_URL": "Order records"},
 			"why": "Runs checkout, verifies Stripe's signature on every payment event, records orders, issues signed download links and sends the email."},
 		Count: []core.CountItem{{N: 1, Noun: "Worker"}, {N: len(bindings), Noun: "binding"}, {N: len(secrets) + 2, Noun: "secret"}}})
 	webhookEvents := []any{"checkout.session.completed", "checkout.session.async_payment_succeeded", "checkout.session.expired", "charge.refunded"}
+	if hasRecurring(items) {
+		// Subscriptions: a canceled subscription ends access to downloads and licenses.
+		webhookEvents = append(webhookEvents, "customer.subscription.deleted")
+	}
 	R(core.ResourceSpec{Key: "webhook", Kind: "stripe.webhook_endpoint", Provider: "stripe", Component: "stripe", Name: "Worker webhook", Title: "Webhook → Worker",
 		DependsOn: []string{"api"},
 		Props: map[string]any{"url": "{{out:api.url}}/stripe/webhook", "events": webhookEvents, "description": "Backplane: {{param:project_name}} ({{env}})", "purpose": "Payment notifications",
@@ -317,7 +325,7 @@ func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, e
 			".gitignore":                            "{{code:.gitignore}}",
 		}
 		R(core.ResourceSpec{Key: "code", Kind: "github.files", Provider: "github", Component: "github", Name: "main", Title: "Commit generated code to main",
-			DependsOn: []string{"repo", "api", "probes", "price", "email_purchase"},
+			DependsOn: append([]string{"repo", "api", "probes", "email_purchase"}, priceKeys...),
 			Props:     map[string]any{"repo": "{{out:repo.full_name}}", "branch": "main", "files": files, "message": "Backplane: generated backend for {{param:project_name}} ({{env}})"}})
 		R(core.ResourceSpec{Key: "gh_cf_token", Kind: "github.actions_secret", Provider: "github", Component: "github", Name: "CLOUDFLARE_API_TOKEN", Title: "Deploy secret CLOUDFLARE_API_TOKEN",
 			DependsOn: []string{"repo"}, Props: map[string]any{"repo": "{{out:repo.full_name}}", "name": "CLOUDFLARE_API_TOKEN", "value": "{{conn:cloudflare.deploy_token}}"}})
@@ -358,10 +366,24 @@ func buildCommerce(t Template, projectName string, a Answers) (core.Blueprint, e
 		{Path: "README.md", Role: "generated", Language: "markdown"},
 		{Path: ".gitignore", Role: "system-config", Language: "text"},
 	}
-	bp.Notes = append(bp.Notes, "Stripe events carry a verified signature; the Worker rejects anything else.",
-		"Download links are HMAC-signed, expire after "+params["download_ttl_hours"].(string)+" hours and are revoked automatically on refund.",
+	bp.Notes = append(bp.Notes, "Sells: "+catalogSummary(items, currency)+". Checkout takes an item and a quantity; the price always comes from Stripe, never from the browser.",
+		"Stripe events carry a verified signature; the Worker rejects anything else.",
 		"Every database table has row-level security enabled.")
+	if mode == "shipping" {
+		return bp, bp.ValidateGraph()
+	}
+	bp.Notes = append(bp.Notes,
+		"Download links are HMAC-signed, expire after "+params["download_ttl_hours"].(string)+" hours and are revoked automatically on refund.")
 	return bp, bp.ValidateGraph()
+}
+
+func hasRecurring(items []Item) bool {
+	for _, it := range items {
+		if it.Billing != BillOnce {
+			return true
+		}
+	}
+	return false
 }
 
 func pick(cond bool, a, b string) string {

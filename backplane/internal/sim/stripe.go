@@ -340,6 +340,8 @@ func (s *Server) stripeRoute(w http.ResponseWriter, method string, p []string, p
 		items, _ := params["line_items"].([]any)
 		var total int64
 		currency := "usd"
+		recurring, interval := 0, ""
+		var lines []any
 		for _, it := range items {
 			m, _ := it.(map[string]any)
 			price := st.prices[str(m["price"])]
@@ -355,8 +357,36 @@ func (s *Server) stripeRoute(w http.ResponseWriter, method string, p []string, p
 			if q == 0 {
 				q = 1
 			}
+			if q < 1 || q > 999999 {
+				stErr(w, 400, "invalid_request_error", "", "Quantity must be a positive integer.", "line_items[0][quantity]")
+				return nil
+			}
+			if rec, ok := price["recurring"].(map[string]any); ok {
+				if interval != "" && interval != str(rec["interval"]) {
+					stErr(w, 400, "invalid_request_error", "", "Checkout does not support multiple prices with different billing intervals.", "line_items")
+					return nil
+				}
+				recurring, interval = recurring+1, str(rec["interval"])
+			}
 			total += price["unit_amount"].(int64) * q
 			currency = str(price["currency"])
+			lines = append(lines, map[string]any{"price": price["id"], "quantity": q, "amount_total": price["unit_amount"].(int64) * q})
+		}
+		switch str(params["mode"]) {
+		case "payment":
+			if recurring > 0 {
+				stErr(w, 400, "invalid_request_error", "", "You specified `payment` mode but passed a recurring price. Either switch to `subscription` mode or use only one-time prices.", "mode")
+				return nil
+			}
+		case "subscription":
+			if recurring == 0 {
+				stErr(w, 400, "invalid_request_error", "", "You must provide at least one recurring price in `subscription` mode when using prices.", "mode")
+				return nil
+			}
+			if params["customer_creation"] != nil {
+				stErr(w, 400, "invalid_request_error", "", "`customer_creation` can only be used in `payment` mode.", "customer_creation")
+				return nil
+			}
 		}
 		mode := "test"
 		if live {
@@ -364,7 +394,11 @@ func (s *Server) stripeRoute(w http.ResponseWriter, method string, p []string, p
 		}
 		id := "cs_" + mode + "_" + newID("", 20)
 		cs := map[string]any{"id": id, "object": "checkout.session", "mode": str(params["mode"]), "status": "open", "payment_status": "unpaid", "amount_total": total, "currency": currency,
-			"url": "https://checkout.stripe.com/c/pay/" + id, "metadata": meta(params["metadata"]), "livemode": live, "success_url": params["success_url"], "expires_at": now + 86400}
+			"url": "https://checkout.stripe.com/c/pay/" + id, "metadata": meta(params["metadata"]), "livemode": live, "success_url": params["success_url"], "expires_at": now + 86400,
+			"line_items": map[string]any{"object": "list", "data": orAny(lines)}}
+		if e, _ := strconv.ParseInt(str(params["expires_at"]), 10, 64); e > now {
+			cs["expires_at"] = e
+		}
 		st.sessions[id] = cs
 		writeJSON(w, 200, cs)
 	case eq(p, "v1", "checkout", "sessions") && method == "GET":
@@ -616,6 +650,59 @@ func (s *Server) stripeArchive(target string) (string, error) {
 		return "Archived Stripe product " + id, nil
 	}
 	return "", fmt.Errorf("no product")
+}
+
+// stripePaySession completes an open Checkout Session as a customer would
+// (test card, the given email) and sends checkout.session.completed. For
+// subscription sessions it also starts a subscription.
+func (s *Server) stripePaySession(id, email string) (string, error) {
+	s.mu.Lock()
+	cs := s.st.sessions[id]
+	if cs == nil {
+		s.mu.Unlock()
+		return "", fmt.Errorf("no checkout session %s", id)
+	}
+	if cs["status"] != "open" {
+		s.mu.Unlock()
+		return "", fmt.Errorf("checkout session %s is %v", id, cs["status"])
+	}
+	if email == "" {
+		email = "customer@example.com"
+	}
+	cs["status"], cs["payment_status"] = "complete", "paid"
+	cs["customer_details"] = map[string]any{"email": email, "name": "Practice Customer", "phone": "+15555550123"}
+	cs["collected_information"] = map[string]any{"shipping_details": map[string]any{"name": "Practice Customer",
+		"address": map[string]any{"line1": "1 Practice Lane", "city": "Testville", "postal_code": "00000", "state": "CA", "country": "US"}}}
+	if cs["mode"] == "subscription" {
+		cs["subscription"] = newID("sub_", 14)
+	} else {
+		cs["payment_intent"] = newID("pi_", 14)
+	}
+	ev := s.newEvent("checkout.session.completed", cs, cs["livemode"] == true)
+	s.mu.Unlock()
+	go s.deliverStripe(ev)
+	return "Paid checkout session " + id, nil
+}
+
+// stripeCancelSubscription ends a subscription and sends
+// customer.subscription.deleted.
+func (s *Server) stripeCancelSubscription(subID string) (string, error) {
+	s.mu.Lock()
+	var live bool
+	found := false
+	for _, cs := range s.st.sessions {
+		if cs["subscription"] == subID {
+			found, live = true, cs["livemode"] == true
+		}
+	}
+	if !found {
+		s.mu.Unlock()
+		return "", fmt.Errorf("no subscription %s", subID)
+	}
+	ev := s.newEvent("customer.subscription.deleted", map[string]any{"id": subID, "object": "subscription", "status": "canceled"}, live)
+	s.mu.Unlock()
+	go s.deliverStripe(ev)
+	return "Canceled subscription " + subID, nil
 }
 
 // stripeKeyValidLocked is used by the simulated Worker to check its key.
