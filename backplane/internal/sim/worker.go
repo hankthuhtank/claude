@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -897,7 +898,10 @@ func orStrings(v []string) []string {
 
 // ---- data Worker ----
 
+var emailRE = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
 func (s *Server) dataWorker(w http.ResponseWriter, r *http.Request, env *wenv, path string) {
+	tmpl := env.get("TEMPLATE")
 	switch {
 	case path == "/":
 		wjson(w, 200, map[string]any{"service": env.get("WORKER_NAME"), "ok": true})
@@ -916,14 +920,19 @@ func (s *Server) dataWorker(w http.ResponseWriter, r *http.Request, env *wenv, p
 		s.mu.Lock()
 		_, kvOK := s.cf.kv[env.kv["PROBES"]]
 		kind := s.resendKeyKindLocked(env.get("RESEND_API_KEY"))
-		stripeOK := s.stripeKeyValidLocked(env.get("STRIPE_SECRET_KEY"))
 		s.mu.Unlock()
 		checks["kv"] = map[string]any{"ok": kvOK, "detail": "namespace reachable"}
 		if env.get("RESEND_API_KEY") != "" {
 			checks["resend"] = map[string]any{"ok": kind != "invalid", "detail": "send-only key valid", "error": map[bool]string{true: "", false: "key rejected"}[kind != "invalid"]}
 		}
 		if env.get("STRIPE_SECRET_KEY") != "" {
-			checks["stripe"] = map[string]any{"ok": stripeOK, "detail": "price active"}
+			if len(wCatalog(env).Items) == 0 {
+				_, err := s.stripeW(env, "GET", "/v1/checkout/sessions?limit=1", nil)
+				checks["stripe"] = map[string]any{"ok": err == nil, "detail": "key valid (no catalog prices to check)", "error": errText(err)}
+			} else {
+				d, err := s.checkPrices(env)
+				checks["stripe"] = map[string]any{"ok": err == nil, "detail": d, "error": errText(err)}
+			}
 		}
 		ok := true
 		for _, c := range checks {
@@ -934,30 +943,234 @@ func (s *Server) dataWorker(w http.ResponseWriter, r *http.Request, env *wenv, p
 		wjson(w, 200, map[string]any{"ok": ok, "worker": env.get("WORKER_NAME"), "checks": checks, "missing": []string{}})
 	case strings.HasPrefix(path, "/__backplane/probe/stripe/"):
 		s.commerceWorker(w, r, env, path)
+	case path == "/products" && r.Method == "GET":
+		wjson(w, 200, publicCatalog(env))
+	case tmpl == "booking" && path == "/book" && r.Method == "POST":
+		s.dataBook(w, r, env)
+	case tmpl == "restaurant" && path == "/order" && r.Method == "POST":
+		s.dataOrder(w, r, env)
 	case path == "/billing/checkout":
-		tok := bearerTok(r)
-		if tok == "" {
+		if len(wCatalog(env).Items) == 0 || env.get("STRIPE_SECRET_KEY") == "" {
+			wjson(w, 501, map[string]any{"error": "billing is not configured"})
+			return
+		}
+		if bearerTok(r) == "" {
 			wjson(w, 401, map[string]any{"error": "sign in first"})
 			return
 		}
 		wjson(w, 501, map[string]any{"error": "simulated"})
 	case path == "/stripe/webhook":
-		payload, _ := io.ReadAll(r.Body)
-		if !verifyStripeSig(payload, r.Header.Get("Stripe-Signature"), env.get("STRIPE_WEBHOOK_SECRET")) {
-			wjson(w, 400, map[string]any{"error": "invalid signature"})
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(payload))
-		var ev map[string]any
-		_ = json.Unmarshal(payload, &ev)
-		if str(ev["type"]) == "checkout.session.expired" {
-			r2 := r.Clone(r.Context())
-			r2.Body = io.NopCloser(bytes.NewReader(payload))
-			s.commerceWebhook(w, r2, env)
-			return
-		}
-		wjson(w, 200, map[string]any{"received": true})
+		s.dataWebhook(w, r, env)
 	default:
 		wjson(w, 404, map[string]any{"error": "not found"})
 	}
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func isProbeReq(r *http.Request, env *wenv) bool {
+	p := r.Header.Get("X-Backplane-Probe")
+	return p != "" && env.get("BACKPLANE_PROBE_TOKEN") != "" && safeEq(p, env.get("BACKPLANE_PROBE_TOKEN"))
+}
+
+func trimTo(v any, n int) any {
+	sv := strings.TrimSpace(str(v))
+	if sv == "" {
+		return nil
+	}
+	if len(sv) > n {
+		sv = sv[:n]
+	}
+	return sv
+}
+
+// dataBook mirrors POST /book: validate, hold the slot, return a checkout.
+func (s *Server) dataBook(w http.ResponseWriter, r *http.Request, env *wenv) {
+	var body map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if str(body["service"]) == "" {
+		wjson(w, 400, map[string]any{"error": "Choose a service."})
+		return
+	}
+	po, err := priceLines(env, []map[string]any{{"key": body["service"], "quantity": 1.0}}, "once")
+	if err != nil {
+		wjson(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	email := strings.TrimSpace(str(body["email"]))
+	if !emailRE.MatchString(email) {
+		wjson(w, 400, map[string]any{"error": "Enter a valid email."})
+		return
+	}
+	starts, err := time.Parse(time.RFC3339, str(body["starts_at"]))
+	if err != nil {
+		wjson(w, 400, map[string]any{"error": "Choose a date and time."})
+		return
+	}
+	if starts.Before(time.Now().Add(15*time.Minute)) || starts.After(time.Now().Add(366*24*time.Hour)) {
+		wjson(w, 400, map[string]any{"error": "Choose a time at least 15 minutes from now and within a year."})
+		return
+	}
+	line := po.Lines[0]
+	at := starts.UTC().Format(time.RFC3339)
+	// The database's unique index on (service, time) for live bookings.
+	if taken, _ := s.sbw(env, "GET", "bookings?service_key=eq."+line.Key+"&starts_at=eq."+url.QueryEscape(at)+"&status=in.(pending,confirmed)&select=id", nil, ""); len(taken) > 0 {
+		wjson(w, 409, map[string]any{"error": "That time was just taken. Please choose another."})
+		return
+	}
+	minutes := wCatalog(env).item(line.Key).Minutes
+	if minutes == 0 {
+		minutes = 30
+	}
+	rows, err := s.sbw(env, "POST", "bookings", []map[string]any{{"owner_id": nil, "service_key": line.Key, "service_name": line.Name, "starts_at": at, "minutes": minutes,
+		"email": email, "customer_name": trimTo(body["name"], 120), "notes": trimTo(body["notes"], 1000), "status": "pending", "deposit_cents": line.Amount,
+		"currency": wCatalog(env).Currency, "is_probe": isProbeReq(r, env)}}, "return=representation")
+	if err != nil || len(rows) == 0 {
+		wjson(w, 500, map[string]any{"error": "internal error"})
+		return
+	}
+	s.dataPayFor(w, r, env, "bookings", rows[0], po, email)
+}
+
+// dataOrder mirrors POST /order: menu prices only, sold-out items refused.
+func (s *Server) dataOrder(w http.ResponseWriter, r *http.Request, env *wenv) {
+	var body map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	arr, _ := body["items"].([]any)
+	if len(arr) == 0 {
+		wjson(w, 400, map[string]any{"error": "Add something to the order."})
+		return
+	}
+	var req []map[string]any
+	for _, x := range arr {
+		m, _ := x.(map[string]any)
+		req = append(req, m)
+	}
+	po, err := priceLines(env, req, "once")
+	if err != nil {
+		wjson(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	email := strings.TrimSpace(str(body["email"]))
+	if !emailRE.MatchString(email) {
+		wjson(w, 400, map[string]any{"error": "Enter a valid email."})
+		return
+	}
+	var keys []string
+	for _, l := range po.Lines {
+		keys = append(keys, l.Key)
+	}
+	if out, _ := s.sbw(env, "GET", "sold_out?item_key=in.("+strings.Join(keys, ",")+")&select=item_key", nil, ""); len(out) > 0 {
+		wjson(w, 409, map[string]any{"error": "Sold out: " + str(out[0]["item_key"]) + "."})
+		return
+	}
+	var items []any
+	var total int64
+	for _, l := range po.Lines {
+		items = append(items, map[string]any{"key": l.Key, "name": l.Name, "quantity": l.Quantity, "unit_amount": l.Amount})
+		total += l.Amount * int64(l.Quantity)
+	}
+	rows, err := s.sbw(env, "POST", "orders", []map[string]any{{"owner_id": nil, "items": items, "total_cents": total, "currency": wCatalog(env).Currency, "email": email,
+		"customer_name": trimTo(body["name"], 120), "notes": trimTo(body["notes"], 1000), "status": "awaiting_payment", "is_probe": isProbeReq(r, env)}}, "return=representation")
+	if err != nil || len(rows) == 0 {
+		wjson(w, 500, map[string]any{"error": "internal error"})
+		return
+	}
+	s.dataPayFor(w, r, env, "orders", rows[0], po, email)
+}
+
+func (s *Server) dataPayFor(w http.ResponseWriter, r *http.Request, env *wenv, table string, row map[string]any, po *pricedOrder, email string) {
+	meta := map[string]string{"row_table": table, "row_id": str(row["id"]), "items": po.Summary, "item_keys": po.Keys}
+	if isProbeReq(r, env) {
+		meta["backplane_probe"] = "1"
+	}
+	back := env.get("APP_URL")
+	if back == "" {
+		back = env.baseURL
+	}
+	cs, err := s.createCheckout(env, po, back+"?session_id={CHECKOUT_SESSION_ID}", meta, url.Values{"customer_email": {email}, "expires_at": {strconv.FormatInt(time.Now().Add(30*time.Minute).Unix(), 10)}})
+	if err != nil {
+		wjson(w, 500, map[string]any{"error": "internal error"})
+		return
+	}
+	_, _ = s.sbw(env, "PATCH", table+"?id=eq."+str(row["id"]), map[string]any{"stripe_session_id": cs["id"]}, "return=minimal")
+	wjson(w, 200, map[string]any{"id": row["id"], "session_id": cs["id"], "url": cs["url"]})
+}
+
+var uuidRE = regexp.MustCompile(`^[0-9a-f-]{36}$`)
+
+// dataWebhook mirrors the data Worker's Stripe webhook.
+func (s *Server) dataWebhook(w http.ResponseWriter, r *http.Request, env *wenv) {
+	payload, _ := io.ReadAll(r.Body)
+	if !verifyStripeSig(payload, r.Header.Get("Stripe-Signature"), env.get("STRIPE_WEBHOOK_SECRET")) {
+		wjson(w, 400, map[string]any{"error": "invalid signature"})
+		return
+	}
+	var ev map[string]any
+	_ = json.Unmarshal(payload, &ev)
+	typ := str(ev["type"])
+	obj, _ := ev["data"].(map[string]any)["object"].(map[string]any)
+	meta, _ := obj["metadata"].(map[string]any)
+	rowTable := ""
+	if t := str(meta["row_table"]); (t == "bookings" || t == "orders" || t == "purchases") && uuidRE.MatchString(str(meta["row_id"])) {
+		rowTable = t
+	}
+	if typ == "checkout.session.expired" {
+		if rowTable == "bookings" || rowTable == "orders" {
+			_, _ = s.sbw(env, "PATCH", rowTable+"?id=eq."+str(meta["row_id"])+"&paid=eq.false", map[string]any{"status": "expired"}, "return=minimal")
+		}
+		r2 := r.Clone(r.Context())
+		r2.Body = io.NopCloser(bytes.NewReader(payload))
+		s.commerceWebhook(w, r2, env)
+		return
+	}
+	if typ != "checkout.session.completed" || rowTable == "" {
+		wjson(w, 200, map[string]any{"received": true, "type": typ})
+		return
+	}
+	if ps := str(obj["payment_status"]); ps != "paid" && ps != "no_payment_required" {
+		wjson(w, 200, map[string]any{"received": true, "type": typ, "outcome": "awaiting_payment"})
+		return
+	}
+	isProbe := ev["livemode"] == false && str(meta["backplane_probe"]) == "1"
+	patch := map[string]any{"paid": true, "stripe_session_id": obj["id"]}
+	if rowTable == "bookings" {
+		patch["status"] = "confirmed"
+	}
+	if rowTable == "orders" && env.get("TEMPLATE") == "restaurant" {
+		patch["status"] = "received"
+	}
+	rows, err := s.sbw(env, "PATCH", rowTable+"?id=eq."+str(meta["row_id"])+"&paid=eq.false", patch, "return=representation")
+	if err != nil {
+		wjson(w, 500, map[string]any{"error": "internal error"})
+		return
+	}
+	if len(rows) == 0 {
+		wjson(w, 200, map[string]any{"received": true, "duplicate": true, "type": typ})
+		return
+	}
+	row := rows[0]
+	emailID, emailErr := "", ""
+	if rowTable == "bookings" || (rowTable == "orders" && env.get("TEMPLATE") == "restaurant") {
+		subject := "Order confirmed"
+		if rowTable == "bookings" {
+			subject = "Booking confirmed — " + str(row["service_name"])
+		}
+		status, data := s.resendW(env, "POST", "/emails", map[string]any{"from": env.get("FROM_EMAIL"), "to": []string{str(row["email"])}, "subject": subject, "html": "<p>Confirmed.</p>"})
+		if status >= 300 {
+			emailErr = fmt.Sprintf("Resend %d: %s", status, str(data["message"]))
+		} else {
+			emailID = str(data["id"])
+		}
+	}
+	out := map[string]any{"received": true, "type": typ}
+	if isProbe {
+		out["probe"] = map[string]any{"row_id": row["id"], "email_id": emailID, "email_error": emailErr}
+	}
+	wjson(w, 200, out)
 }

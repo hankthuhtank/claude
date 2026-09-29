@@ -134,6 +134,12 @@ func probeLink(item, what string) LinkCheck {
 		if it.Skipped {
 			return core.CheckResult{Health: core.HealthOK, Summary: orStr(it.Detail, "Configured"), LatencyMS: it.MS}
 		}
+		if it.OK && it.Warn && c.P.Blueprint.Param("product_file") == "" {
+			// The file was left for later on purpose (the form says it's
+			// optional): the backend page lists it as a to-do instead.
+			return core.CheckResult{Health: core.HealthOK, Summary: "Storage works. The product file isn't uploaded yet — it's on the backend's to-do list.", LatencyMS: it.MS,
+				Details: map[string]string{"measured from": "inside the Worker", "to-do": "Upload the file customers buy"}}
+		}
 		if it.OK && it.Warn {
 			prob := &core.Problem{Title: "PRODUCT FILE NOT UPLOADED", Code: "invalid",
 				Summary:  "Storage works, but the file customers buy isn't there yet, so download links would fail. Upload it, then build to put it in private storage.",

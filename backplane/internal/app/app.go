@@ -135,7 +135,7 @@ func init() {
 		"ListProjects", "GetProject", "CreateProject", "UpdateProject", "DeleteProject", "AssignConnection", "AddEnvironment",
 		"Plan", "Approve", "GetRun", "ListRuns", "Resume", "Cancel", "Rollback",
 		"Check", "CancelCheck", "LatestReport", "GetReport", "History", "Repair",
-		"Logs", "Code", "RegenerateCode", "UploadProductFile",
+		"Logs", "Code", "RegenerateCode", "UploadProductFile", "Products",
 		"Discover", "ImportProject", "Export", "Versions", "Security",
 		"StartPractice", "StopPractice", "PracticeBreak", "PracticeState",
 		"Interpret", "DesignFromDescription", "SetAIKey", "AIState", "Snapshots", "RestoreSnapshot", "Dashboard",

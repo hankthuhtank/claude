@@ -74,8 +74,8 @@ func (it Item) CentsFor(interval string) int64 {
 func toCents(v float64) int64 { return int64(math.Round(v * 100)) }
 
 // ProductKey and PriceKey are the blueprint resource keys for an item.
-func ProductKey(item string) string            { return "product_" + item }
-func PriceKey(item, interval string) string     { return "price_" + item + "_" + interval }
+func ProductKey(item string) string         { return "product_" + item }
+func PriceKey(item, interval string) string { return "price_" + item + "_" + interval }
 func productsQuestion(spec ProductsSpec) Question {
 	label := "Products & prices"
 	switch spec.Noun {

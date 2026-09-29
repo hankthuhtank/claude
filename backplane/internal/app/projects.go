@@ -631,6 +631,42 @@ type DashboardResult struct {
 	Connections map[string]map[string]string `json:"connections"`
 	// Answers are the preset answers the blueprint was built from.
 	Answers map[string]any `json:"answers"`
+	// Todos are things left for later on purpose; they are not health problems.
+	Todos []Todo `json:"todos"`
+}
+
+// Todo is a step the owner still has to take (shown on the backend page).
+type Todo struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Detail string `json:"detail"`
+	Action string `json:"action"` // upload | plan | settings
+}
+
+// todos lists what's intentionally unfinished for an environment.
+func (a *App) todos(pr *core.Project, man *core.Manifest) []Todo {
+	out := []Todo{}
+	if pr.Imported {
+		return out
+	}
+	bp := &pr.Blueprint
+	built := len(man.Resources) > 0
+	if t, ok := blueprints.Get(pr.TemplateID); ok && t.Engine == "commerce" && t.Mode != "shipping" && bp.Param("product_file") == "" {
+		detail := "Customers get a download link after paying, so the file must be in place before the first sale. Choose it on the Settings tab; the next build puts it in private storage."
+		if !built {
+			detail = "You can build without it. Choose it on the Settings tab any time; the next build puts it in private storage."
+		}
+		out = append(out, Todo{ID: "upload", Title: "Upload the file customers buy", Detail: detail, Action: "upload"})
+	}
+	if built {
+		if v, err := a.Products(context.Background(), DashboardParams{ProjectID: pr.ID, Env: man.Environment}); err == nil && v.Pending {
+			out = append(out, Todo{ID: "prices", Title: "Build to apply your product changes", Detail: "Products or prices changed since the last build. Plan the build to review exactly what changes in Stripe.", Action: "plan"})
+		}
+	}
+	if bp.Param("order_path") != "" && built {
+		out = append(out, Todo{ID: "staff", Title: "Add your team to the staff table", Detail: "Staff see every " + map[bool]string{true: "booking", false: "order"}[bp.Param("template") == "booking"] + " in your app. Add their user ids to the staff table in the Supabase dashboard.", Action: ""})
+	}
+	return out
 }
 
 // ResourceRow is one resource in the dashboard's inventory table.
@@ -690,6 +726,7 @@ func (a *App) Dashboard(ctx context.Context, p DashboardParams) (*DashboardResul
 	d.Monitor = a.monitor.state(pr, env)
 	d.Checking = a.Engine.CheckRunning(pr.ID, env)
 	d.Resources = resourceRows(pr, man, d.Report)
+	d.Todos = a.todos(pr, man)
 	d.Secrets = len(a.Vault.List("p/" + pr.ID + "/" + env + "/"))
 	for _, e := range pr.Environments {
 		if h, _ := a.Store.History(pr.ID, e, 1); len(h) > 0 {

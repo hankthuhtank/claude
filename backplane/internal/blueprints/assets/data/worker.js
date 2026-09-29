@@ -7,6 +7,10 @@
 // database, template-specific jobs (newsletter confirmation, webhook relay,
 // booking reminders) and Backplane's health probes.
 //
+// Booking and Restaurant presets also take bookings and orders from guests:
+// what's for sale lives in CATALOG (set by Backplane from the Products tab),
+// and customers only ever send an item key and a quantity — never a price.
+//
 // Backplane tracks this file; edits are marked USER MODIFIED and never
 // overwritten without asking.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,6 +29,9 @@ export default {
       if (path === "/__backplane/health") return await health(request, env, url);
       if (path.startsWith("/__backplane/probe/stripe/")) return await probeStripe(request, env, path.split("/").pop());
       if (path === "/stripe/webhook" && request.method === "POST") return await stripeWebhook(request, env, ctx);
+      if (path === "/products" && request.method === "GET") return cors(publicCatalog(env), env, origin);
+      if (env.TEMPLATE === "booking" && path === "/book" && request.method === "POST") return cors(await book(request, env, url), env, origin);
+      if (env.TEMPLATE === "restaurant" && path === "/order" && request.method === "POST") return cors(await placeOrder(request, env, url), env, origin);
       if (path === "/billing/checkout" && request.method === "POST") return cors(await billingCheckout(request, env), env, origin);
       if (path === "/billing/portal" && request.method === "POST") return cors(await billingPortal(request, env), env, origin);
       if (env.TEMPLATE === "newsletter" && path === "/subscribe" && request.method === "POST") return cors(await subscribe(request, env, url), env, origin);
@@ -74,6 +81,25 @@ function bearer(request) {
   const h = request.headers.get("Authorization") || "";
   return h.startsWith("Bearer ") ? h.slice(7) : "";
 }
+function isProbeRequest(request, env) {
+  const probe = request.headers.get("X-Backplane-Probe");
+  return Boolean(probe) && Boolean(env.BACKPLANE_PROBE_TOKEN) && safeEqual(probe, env.BACKPLANE_PROBE_TOKEN);
+}
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function clean(s, max) {
+  const v = String(s ?? "").trim().slice(0, max);
+  return v || null;
+}
+function money(amount, currency) {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: String(currency || "usd").toUpperCase() }).format((amount || 0) / 100);
+  } catch {
+    return `${((amount || 0) / 100).toFixed(2)} ${String(currency || "").toUpperCase()}`;
+  }
+}
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 // ───────── Supabase ─────────
 function sbHeaders(env, extra = {}) {
@@ -138,20 +164,200 @@ async function verifyStripe(payload, header, secret) {
   return sigs.some((s) => safeEqual(s, expected));
 }
 
+// ───────── Catalog ─────────
+// CATALOG: { currency, items: [{ key, name, billing, minutes?, prices: { once|month|year: price id }, amounts: {…} }] }
+function catalog(env) {
+  try {
+    const c = JSON.parse(env.CATALOG || "");
+    if (c && Array.isArray(c.items)) return c;
+  } catch {
+    // fall through
+  }
+  if (env.PRICE_ID) return { currency: "usd", items: [{ key: "main", name: env.BUSINESS_NAME || "Plan", billing: env.BILLING_MODE === "subscription" ? "month" : "once", prices: { [env.BILLING_MODE === "subscription" ? "month" : "once"]: env.PRICE_ID }, amounts: {} }] };
+  return { currency: "usd", items: [] };
+}
+class OrderError extends Error {}
+// Maps requested items to catalog prices; throws OrderError with a message
+// that is safe to show the customer. Amounts are never read from a request.
+function priceLines(env, requested, interval) {
+  const cat = catalog(env);
+  if (!cat.items.length) throw new OrderError("Nothing is for sale yet.");
+  const max = Math.max(1, Number(env.MAX_QUANTITY || 1));
+  const cart = env.CART === "true";
+  const lines = requested.length ? requested : [{ key: cat.items[0].key, quantity: 1 }];
+  if (lines.length > (cart ? 20 : 1)) throw new OrderError(cart ? "Up to 20 different items per order." : "Choose one item.");
+  const merged = new Map();
+  for (const l of lines) {
+    const key = String(l?.key ?? l?.item ?? "");
+    const item = cat.items.find((i) => i.key === key);
+    if (!item) throw new OrderError(`Unknown item "${key.slice(0, 40)}".`);
+    const qty = l?.quantity === undefined || l?.quantity === null || l?.quantity === "" ? 1 : Number(l.quantity);
+    const total = (merged.get(key)?.quantity || 0) + qty;
+    if (!Number.isInteger(qty) || qty < 1 || total > max) throw new OrderError(max === 1 ? "Quantity must be 1." : `Quantity must be between 1 and ${max}.`);
+    merged.set(key, { item, quantity: total });
+  }
+  const chosen = [...merged.values()];
+  const iv = interval || chosen[0].item.billing || Object.keys(chosen[0].item.prices)[0];
+  for (const c of chosen) if (!c.item.prices?.[iv]) throw new OrderError(`"${c.item.name}" isn't sold that way.`);
+  const out = chosen.map((c) => ({ key: c.item.key, name: c.item.name, quantity: c.quantity, price: c.item.prices[iv], amount: c.item.amounts?.[iv] ?? 0, minutes: c.item.minutes || 0 }));
+  const summary = out.map((l) => (l.quantity > 1 ? `${l.name} × ${l.quantity}` : l.name)).join(", ");
+  return { interval: iv, currency: cat.currency, lines: out, summary: summary.slice(0, 450), keys: out.map((l) => `${l.key}:${l.quantity}`).join(",").slice(0, 490) };
+}
+function publicCatalog(env) {
+  const cat = catalog(env);
+  const items = cat.items.map((i) => ({
+    key: i.key, name: i.name, description: i.description || undefined, minutes: i.minutes || undefined, billing: i.billing,
+    prices: Object.fromEntries(Object.entries(i.amounts || {}).map(([iv, a]) => [iv, { amount: a, display: money(a, cat.currency) }])),
+  }));
+  return json({ currency: cat.currency, items, cart: env.CART === "true", max_quantity: Math.max(1, Number(env.MAX_QUANTITY || 1)) }, 200, { "cache-control": "public, max-age=60" });
+}
+
+// ───────── Guest bookings and orders ─────────
+
+// POST /book { service, starts_at, email, name?, notes? } → holds the slot and returns a Stripe Checkout URL for the deposit.
+async function book(request, env, url) {
+  const isProbe = isProbeRequest(request, env);
+  const body = (await request.json().catch(() => ({}))) || {};
+  if (!body.service) return json({ error: "Choose a service." }, 400);
+  let order;
+  try {
+    order = priceLines(env, [{ key: body.service, quantity: 1 }], "once");
+  } catch (e) {
+    if (e instanceof OrderError) return json({ error: e.message }, 400);
+    throw e;
+  }
+  const email = String(body.email || "").trim();
+  if (!EMAIL_RE.test(email)) return json({ error: "Enter a valid email." }, 400);
+  const starts = new Date(String(body.starts_at || ""));
+  if (Number.isNaN(starts.getTime())) return json({ error: "Choose a date and time." }, 400);
+  if (starts.getTime() < Date.now() + 15 * 60e3 || starts.getTime() > Date.now() + 366 * 86400e3) return json({ error: "Choose a time at least 15 minutes from now and within a year." }, 400);
+  const line = order.lines[0];
+  const user = await currentUser(request, env);
+  let row;
+  try {
+    [row] = await sb(env, "POST", "bookings", [{
+      owner_id: user?.id ?? null, service_key: line.key, service_name: line.name, starts_at: starts.toISOString(), minutes: line.minutes || 30,
+      email, customer_name: clean(body.name, 120), notes: clean(body.notes, 1000), status: "pending", deposit_cents: line.amount, currency: order.currency, is_probe: isProbe,
+    }], "return=representation");
+  } catch (e) {
+    // The unique index on (service, time) for pending/confirmed bookings.
+    if (/→ 409/.test(String(e.message))) return json({ error: "That time was just taken. Please choose another." }, 409);
+    throw e;
+  }
+  return await payFor(env, url, "bookings", row, order, email, isProbe);
+}
+
+// POST /order { items: [{ key, quantity }], email, name?, notes?, pickup_at? } → records the order at menu prices and returns a Stripe Checkout URL.
+async function placeOrder(request, env, url) {
+  const isProbe = isProbeRequest(request, env);
+  const body = (await request.json().catch(() => ({}))) || {};
+  if (!Array.isArray(body.items) || !body.items.length) return json({ error: "Add something to the order." }, 400);
+  let order;
+  try {
+    order = priceLines(env, body.items, "once");
+  } catch (e) {
+    if (e instanceof OrderError) return json({ error: e.message }, 400);
+    throw e;
+  }
+  const email = String(body.email || "").trim();
+  if (!EMAIL_RE.test(email)) return json({ error: "Enter a valid email." }, 400);
+  let pickup = null;
+  if (body.pickup_at) {
+    const t = new Date(String(body.pickup_at));
+    if (Number.isNaN(t.getTime()) || t.getTime() < Date.now() - 60e3) return json({ error: "Choose a pickup time in the future." }, 400);
+    pickup = t.toISOString();
+  }
+  const soldOut = await sb(env, "GET", `sold_out?item_key=in.(${order.lines.map((l) => l.key).join(",")})&select=item_key`).catch(() => []);
+  if (soldOut?.length) {
+    const names = soldOut.map((r) => order.lines.find((l) => l.key === r.item_key)?.name || r.item_key);
+    return json({ error: `Sold out: ${names.join(", ")}.`, sold_out: soldOut.map((r) => r.item_key) }, 409);
+  }
+  const user = await currentUser(request, env);
+  const total = order.lines.reduce((t, l) => t + l.amount * l.quantity, 0);
+  const [row] = await sb(env, "POST", "orders", [{
+    owner_id: user?.id ?? null, items: order.lines.map((l) => ({ key: l.key, name: l.name, quantity: l.quantity, unit_amount: l.amount })), total_cents: total,
+    currency: order.currency, email, customer_name: clean(body.name, 120), notes: clean(body.notes, 1000), pickup_at: pickup, status: "awaiting_payment", is_probe: isProbe,
+  }], "return=representation");
+  return await payFor(env, url, "orders", row, order, email, isProbe);
+}
+
+// Creates the Checkout Session for a booking or order row. The session
+// expires after 30 minutes, which releases an unpaid booking's time slot.
+async function payFor(env, url, table, row, order, email, isProbe) {
+  const back = env.APP_URL || `${url.protocol}//${url.host}`;
+  const session = await stripe(env, "POST", "/v1/checkout/sessions", {
+    mode: "payment",
+    line_items: order.lines.map((l) => ({ price: l.price, quantity: l.quantity })),
+    customer_email: email,
+    success_url: `${back}${back.includes("?") ? "&" : "?"}paid=${table === "bookings" ? "booking" : "order"}&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: back,
+    expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
+    metadata: { row_table: table, row_id: row.id, items: order.summary, item_keys: order.keys, ...(isProbe ? { backplane_probe: "1" } : {}) },
+  });
+  await sb(env, "PATCH", `${table}?id=eq.${row.id}`, { stripe_session_id: session.id }, "return=minimal");
+  return json({ id: row.id, session_id: session.id, url: session.url });
+}
+
+async function resendSend(env, msg) {
+  const res = await fetch(`${env.RESEND_API_BASE || "https://api.resend.com"}/emails`, {
+    method: "POST", headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify(msg),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Resend ${res.status}: ${data?.message || data?.name || "error"}`);
+  return data.id;
+}
+
+// Confirmation email for a paid booking or order.
+async function sendConfirmation(env, table, row) {
+  if (!env.RESEND_API_KEY || !row.email) return null;
+  const business = env.BUSINESS_NAME || "Our team";
+  let subject, lead, detail;
+  if (table === "bookings") {
+    const when = new Date(row.starts_at).toUTCString().replace(" GMT", " UTC");
+    subject = `Booking confirmed — ${row.service_name}`;
+    lead = `Your ${row.service_name} is booked.`;
+    detail = `<p style="margin:0 0 8px"><strong>${escapeHtml(when)}</strong> · ${escapeHtml(String(row.minutes || 30))} minutes</p><p style="margin:0 0 18px">Deposit paid: ${escapeHtml(money(row.deposit_cents, row.currency))}. We'll remind you the day before.</p>`;
+  } else {
+    subject = `Order confirmed — ${business}`;
+    lead = "We've got your order.";
+    const lines = (row.items || []).map((i) => `<li>${escapeHtml(i.name)}${i.quantity > 1 ? ` × ${escapeHtml(String(i.quantity))}` : ""}</li>`).join("");
+    detail = `<ul style="margin:0 0 12px;padding-left:18px">${lines}</ul><p style="margin:0 0 18px">Paid: ${escapeHtml(money(row.total_cents, row.currency))}${row.pickup_at ? ` · pickup ${escapeHtml(new Date(row.pickup_at).toUTCString().replace(" GMT", " UTC"))}` : ""}</p>`;
+  }
+  const msg = {
+    from: env.FROM_EMAIL, to: [row.email], subject, tags: [{ name: "kind", value: table === "bookings" ? "booking" : "order" }],
+    html: `<!doctype html><html><body style="margin:0;background:#f4f2ee;padding:32px 12px;font:16px/1.55 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1b1d1f">
+<table role="presentation" width="100%" style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #e3ded4;border-radius:10px"><tr><td style="padding:32px">
+<p style="margin:0 0 6px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#6b665c">${escapeHtml(business)}</p>
+<h1 style="margin:0 0 16px;font-size:24px">Thanks${row.customer_name ? ", " + escapeHtml(row.customer_name) : ""} — ${escapeHtml(lead)}</h1>${detail}
+<hr style="border:0;border-top:1px solid #eee;margin:26px 0 14px"><p style="margin:0;color:#777;font-size:13px">Reference ${escapeHtml(String(row.id).slice(0, 8))} · Questions? Reply to this email.</p>
+</td></tr></table></body></html>`,
+  };
+  if (env.SUPPORT_EMAIL) msg.reply_to = env.SUPPORT_EMAIL;
+  return await resendSend(env, msg);
+}
+
 async function billingCheckout(request, env) {
-  if (!env.STRIPE_SECRET_KEY || !env.PRICE_ID) return json({ error: "billing is not configured" }, 501);
+  if (!env.STRIPE_SECRET_KEY || !catalog(env).items.length) return json({ error: "billing is not configured" }, 501);
   const user = await currentUser(request, env);
   if (!user) return json({ error: "sign in first" }, 401);
-  const subscription = env.BILLING_MODE === "subscription";
+  const body = (await request.json().catch(() => ({}))) || {};
+  let order;
+  try {
+    order = priceLines(env, body.plan ? [{ key: body.plan, quantity: 1 }] : [], body.interval ? String(body.interval) : "");
+  } catch (e) {
+    if (e instanceof OrderError) return json({ error: e.message }, 400);
+    throw e;
+  }
+  const subscription = order.interval !== "once";
   const session = await stripe(env, "POST", "/v1/checkout/sessions", {
     mode: subscription ? "subscription" : "payment",
-    line_items: [{ price: env.PRICE_ID, quantity: 1 }],
+    line_items: order.lines.map((l) => ({ price: l.price, quantity: l.quantity })),
     client_reference_id: user.id,
     customer_email: user.email,
     success_url: `${env.APP_URL || ""}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: env.APP_URL || undefined,
-    metadata: { user_id: user.id },
-    subscription_data: subscription ? { metadata: { user_id: user.id } } : undefined,
+    metadata: { user_id: user.id, items: order.summary, item_keys: order.keys },
+    subscription_data: subscription ? { metadata: { user_id: user.id, plan: order.lines[0].key } } : undefined,
   });
   return json({ id: session.id, url: session.url });
 }
@@ -171,8 +377,14 @@ async function stripeWebhook(request, env, ctx) {
   if (!(await verifyStripe(payload, request.headers.get("Stripe-Signature"), env.STRIPE_WEBHOOK_SECRET))) return json({ error: "invalid signature" }, 400);
   const event = JSON.parse(payload);
   const obj = event.data?.object || {};
+  const payable = String(env.PAYABLE_TABLES || "bookings,orders,purchases").split(",");
+  const rowTable = payable.includes(obj.metadata?.row_table) && /^[0-9a-f-]{36}$/.test(obj.metadata?.row_id || "") ? obj.metadata.row_table : null;
   if (event.type === "checkout.session.expired") {
     if (obj.metadata?.backplane_probe === "1" && env.PROBES) await env.PROBES.put(`probe:cs:${obj.id}`, JSON.stringify({ event_id: event.id, at: new Date().toISOString() }), { expirationTtl: 3600 });
+    // An abandoned checkout releases the booking's time slot.
+    if (rowTable === "bookings" || rowTable === "orders") {
+      await sb(env, "PATCH", `${rowTable}?id=eq.${obj.metadata.row_id}&paid=eq.false`, { status: "expired" }, "return=minimal");
+    }
     return json({ received: true, type: event.type });
   }
   if (event.type.startsWith("customer.subscription.")) {
@@ -188,12 +400,34 @@ async function stripeWebhook(request, env, ctx) {
     }
     return json({ received: true, type: event.type });
   }
-  if (event.type === "checkout.session.completed" && obj.metadata?.row_table && obj.metadata?.row_id) {
-    const allowed = String(env.PAYABLE_TABLES || "bookings,orders,purchases").split(",");
-    if (allowed.includes(obj.metadata.row_table)) {
-      await sb(env, "PATCH", `${obj.metadata.row_table}?id=eq.${obj.metadata.row_id}`, { paid: true, stripe_session_id: obj.id }, "return=minimal");
-      ctx.waitUntil(logEvent(env, "stripe", "payment", `Payment for ${obj.metadata.row_table} ${obj.metadata.row_id}`, obj.id));
+  if (event.type === "checkout.session.completed" && rowTable) {
+    if (obj.payment_status !== "paid" && obj.payment_status !== "no_payment_required") return json({ received: true, type: event.type, outcome: "awaiting_payment" });
+    const isProbe = event.livemode === false && obj.metadata?.backplane_probe === "1";
+    const patch = { paid: true, stripe_session_id: obj.id };
+    if (rowTable === "bookings") patch.status = "confirmed";
+    if (rowTable === "orders" && env.TEMPLATE === "restaurant") patch.status = "received";
+    // Only the first delivery flips paid=false → true, so Stripe's retries
+    // never send a second confirmation.
+    const rows = await sb(env, "PATCH", `${rowTable}?id=eq.${obj.metadata.row_id}&paid=eq.false`, patch, "return=representation");
+    if (!rows?.length) return json({ received: true, duplicate: true, type: event.type });
+    const row = rows[0];
+    let emailId = null;
+    let emailError = null;
+    if (rowTable === "bookings" || (rowTable === "orders" && env.TEMPLATE === "restaurant")) {
+      try {
+        emailId = await sendConfirmation(env, rowTable, row);
+      } catch (e) {
+        emailError = String(e.message || e);
+        console.error("Confirmation email failed", emailError);
+      }
     }
+    ctx.waitUntil((async () => {
+      await logEvent(env, "stripe", "payment", `Payment for ${rowTable} ${row.id}`, obj.id, isProbe);
+      if (emailId || emailError) await logEvent(env, "resend", emailError ? "email_failed" : "email", emailError ? `Confirmation failed: ${emailError}` : `Confirmation accepted (${emailId})`, obj.id, isProbe);
+    })());
+    const out = { received: true, type: event.type };
+    if (isProbe) out.probe = { row_id: row.id, email_id: emailId, email_error: emailError };
+    return json(out);
   }
   return json({ received: true, type: event.type });
 }
@@ -252,17 +486,23 @@ async function bookingReminders(env) {
   if (!env.RESEND_API_KEY) return;
   const from = new Date(Date.now() + 23 * 3600e3).toISOString();
   const to = new Date(Date.now() + 25 * 3600e3).toISOString();
-  const due = await sb(env, "GET", `bookings?status=eq.confirmed&reminder_sent_at=is.null&starts_at=gte.${from}&starts_at=lte.${to}&select=id,email,starts_at&limit=50`).catch(() => []);
+  const due = await sb(env, "GET", `bookings?status=eq.confirmed&is_probe=eq.false&reminder_sent_at=is.null&starts_at=gte.${from}&starts_at=lte.${to}&select=id,email,starts_at,service_name&limit=50`).catch(() => []);
   for (const b of due || []) {
     if (!b.email) continue;
-    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: env.FROM_EMAIL, to: [b.email], subject: "Reminder: your appointment tomorrow", html: `<p>This is a reminder of your appointment on ${new Date(b.starts_at).toUTCString()}.</p>` }) });
-    if (r.ok) await sb(env, "PATCH", `bookings?id=eq.${b.id}`, { reminder_sent_at: new Date().toISOString() }, "return=minimal");
+    try {
+      await resendSend(env, { from: env.FROM_EMAIL, to: [b.email], subject: `Reminder: ${b.service_name || "your appointment"} tomorrow`,
+        html: `<p>This is a reminder of your ${escapeHtml(b.service_name || "appointment")} on ${escapeHtml(new Date(b.starts_at).toUTCString())}.</p>` });
+      await sb(env, "PATCH", `bookings?id=eq.${b.id}`, { reminder_sent_at: new Date().toISOString() }, "return=minimal");
+    } catch (e) {
+      console.warn("Reminder failed", String(e));
+    }
   }
 }
 
 async function housekeeping(env) {
   const dayAgo = new Date(Date.now() - 86400e3).toISOString();
+  if (env.TEMPLATE === "booking") await sb(env, "DELETE", `bookings?is_probe=eq.true&created_at=lt.${dayAgo}`, undefined, "return=minimal").catch(() => {});
+  if (env.TEMPLATE === "restaurant") await sb(env, "DELETE", `orders?is_probe=eq.true&created_at=lt.${dayAgo}`, undefined, "return=minimal").catch(() => {});
   await sb(env, "DELETE", `backplane_probe?created_at=lt.${dayAgo}`, undefined, "return=minimal").catch(() => {});
   await sb(env, "DELETE", `bp_events?is_probe=eq.true&at=lt.${dayAgo}`, undefined, "return=minimal").catch(() => {});
 }
@@ -297,9 +537,20 @@ async function health(request, env, url) {
   });
   if (env.STRIPE_SECRET_KEY) {
     checks.stripe = await timed(async () => {
-      const price = await stripe(env, "GET", `/v1/prices/${env.PRICE_ID}`);
-      if (!price.active) throw new Error(`price ${env.PRICE_ID} is inactive`);
-      return `price active (${price.livemode ? "live" : "test"} mode)`;
+      const cat = catalog(env);
+      if (!cat.items.length) {
+        // Nothing sold through the catalog (e.g. a marketplace): prove the key works.
+        await stripe(env, "GET", "/v1/checkout/sessions?limit=1");
+        return "key valid (no catalog prices to check)";
+      }
+      const all = cat.items.flatMap((it) => Object.entries(it.prices || {}).map(([iv, id]) => ({ it, iv, id })));
+      let mode = "test";
+      for (const p of all.slice(0, 8)) {
+        const price = await stripe(env, "GET", `/v1/prices/${encodeURIComponent(p.id)}`);
+        if (!price.active) throw new Error(`price for ${p.it.name} (${p.iv}) is inactive`);
+        mode = price.livemode ? "live" : "test";
+      }
+      return `${all.length} price${all.length === 1 ? "" : "s"} for ${cat.items.length} item${cat.items.length === 1 ? "" : "s"} active (${mode} mode)`;
     });
   }
   if (env.RESEND_API_KEY) {

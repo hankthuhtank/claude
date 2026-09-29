@@ -67,6 +67,7 @@ func (productH) Apply(ctx context.Context, s *providers.Session, spec *core.Reso
 		params["active"] = true
 		if err := Call(ctx, c, "POST", "/v1/products/"+st.ID, params, "", &p); err == nil {
 			next := providers.Touch(spec, st, p.ID, p.Name)
+			next.Applied = nil // the engine records what was just applied; don't carry the old values
 			next.SetOutput("id", p.ID)
 			return &providers.ApplyResult{State: next}, nil
 		} else if !httpx.IsNotFound(err) {
@@ -78,6 +79,7 @@ func (productH) Apply(ctx context.Context, s *providers.Session, spec *core.Reso
 		return nil, err
 	}
 	next := providers.Touch(spec, st, p.ID, p.Name)
+	next.Applied = nil
 	next.SetOutput("id", p.ID)
 	return &providers.ApplyResult{State: next, Created: true}, nil
 }
@@ -180,6 +182,7 @@ func (priceH) Apply(ctx context.Context, s *providers.Session, spec *core.Resour
 					label += " / " + interval
 				}
 				next := providers.Touch(spec, st, p.ID, label)
+				next.Applied = nil
 				next.SetOutput("id", p.ID)
 				next.SetOutput("amount", fmt.Sprint(amount))
 				next.SetOutput("currency", currency)
@@ -220,6 +223,7 @@ func (priceH) Apply(ctx context.Context, s *providers.Session, spec *core.Resour
 		_ = Call(ctx, c, "POST", "/v1/prices/"+retire, map[string]any{"active": false}, "", nil)
 	}
 	next := providers.Touch(spec, st, p.ID, label)
+	next.Applied = nil
 	next.SetOutput("id", p.ID)
 	next.SetOutput("amount", fmt.Sprint(amount))
 	next.SetOutput("currency", currency)
