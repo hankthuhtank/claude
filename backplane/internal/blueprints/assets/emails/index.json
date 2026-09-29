@@ -1,0 +1,140 @@
+[
+ {
+  "key": "purchase",
+  "name": "Purchase confirmation",
+  "subject": "Your {{{PRODUCT_NAME}}} download",
+  "variables": [
+   "PRODUCT_NAME",
+   "CUSTOMER_NAME",
+   "DOWNLOAD_URL",
+   "AMOUNT",
+   "ORDER_ID",
+   "EXPIRES",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL",
+   "LICENSE_KEY"
+  ]
+ },
+ {
+  "key": "welcome",
+  "name": "Welcome",
+  "subject": "Welcome to {{{BUSINESS_NAME}}}",
+  "variables": [
+   "CUSTOMER_NAME",
+   "ACTION_URL",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "verify",
+  "name": "Verify account",
+  "subject": "Confirm your email for {{{BUSINESS_NAME}}}",
+  "variables": [
+   "ACTION_URL",
+   "EXPIRES",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "password_reset",
+  "name": "Password reset",
+  "subject": "Reset your {{{BUSINESS_NAME}}} password",
+  "variables": [
+   "ACTION_URL",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "receipt",
+  "name": "Receipt",
+  "subject": "Receipt for {{{AMOUNT}}} \u2014 {{{BUSINESS_NAME}}}",
+  "variables": [
+   "PRODUCT_NAME",
+   "AMOUNT",
+   "DATE",
+   "ORDER_ID",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "download_link",
+  "name": "Download link",
+  "subject": "Your {{{PRODUCT_NAME}}} download link",
+  "variables": [
+   "PRODUCT_NAME",
+   "DOWNLOAD_URL",
+   "EXPIRES",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "subscription_started",
+  "name": "Subscription started",
+  "subject": "Your {{{PLAN_NAME}}} subscription is active",
+  "variables": [
+   "PLAN_NAME",
+   "AMOUNT",
+   "INTERVAL",
+   "PORTAL_URL",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "subscription_canceled",
+  "name": "Subscription canceled",
+  "subject": "Your {{{PLAN_NAME}}} subscription was canceled",
+  "variables": [
+   "PLAN_NAME",
+   "ENDS_AT",
+   "PORTAL_URL",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "appointment",
+  "name": "Appointment confirmation",
+  "subject": "Confirmed: {{{SERVICE_NAME}}} on {{{WHEN}}}",
+  "variables": [
+   "SERVICE_NAME",
+   "WHEN",
+   "LOCATION",
+   "DEPOSIT",
+   "MANAGE_URL",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "notification",
+  "name": "Notification",
+  "subject": "{{{TITLE}}}",
+  "variables": [
+   "TITLE",
+   "MESSAGE",
+   "ACTION_URL",
+   "ACTION_LABEL",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ },
+ {
+  "key": "support_response",
+  "name": "Support response",
+  "subject": "Re: {{{TICKET_SUBJECT}}} [#{{{TICKET_ID}}}]",
+  "variables": [
+   "TICKET_SUBJECT",
+   "TICKET_ID",
+   "REPLY",
+   "TICKET_URL",
+   "BUSINESS_NAME",
+   "SUPPORT_EMAIL"
+  ]
+ }
+]

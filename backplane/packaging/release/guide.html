@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en" data-theme="rack">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backplane Guide</title>
+<meta name="description" content="How to install Backplane, build a backend, read its six checks, and keep it healthy.">
+<style>
+/*@FONTS@*/
+:root, [data-theme="rack"] {
+  --bg: #0f1112; --rail: #121416; --panel: #1d2023; --panel-2: #262a2e; --well: #16191b;
+  --line: #2e3236; --line-2: #3b4045; --ink: #eceae4; --ink-2: #a9aca8; --muted: #8a8e8b;
+  --accent: #2cc4d3; --accent-ink: #031416; --screw: #0b0c0d; --led-off: #2b2f33;
+  --bevel: rgb(255 255 255 / .05); --shade: rgb(0 0 0 / .45);
+  color-scheme: dark;
+}
+[data-theme="aluminum"] {
+  --bg: #cfd3d6; --rail: #c3c8cc; --panel: #f5f5f4; --panel-2: #ffffff; --well: #eceeee;
+  --line: #d6d9db; --line-2: #b9bec2; --ink: #1b1d1f; --ink-2: #454a4f; --muted: #5f656a;
+  --accent: #00707e; --accent-ink: #ffffff; --screw: #9aa1a6; --led-off: #c9cdd0;
+  --bevel: rgb(255 255 255 / .7); --shade: rgb(40 48 54 / .18);
+  color-scheme: light;
+}
+[data-theme="copper"] {
+  --bg: #120d0b; --rail: #16110e; --panel: #231b16; --panel-2: #2e241e; --well: #1b1411;
+  --line: #3a2e26; --line-2: #4a3b31; --ink: #f2e7db; --ink-2: #c9b39f; --muted: #a08875;
+  --accent: #e0915a; --accent-ink: #1a0f08; --screw: #0c0806; --led-off: #3a2e26;
+  --bevel: rgb(255 220 190 / .05); --shade: rgb(0 0 0 / .5);
+  color-scheme: dark;
+}
+[data-theme="fiber"] {
+  --bg: #0a0f11; --rail: #0d1316; --panel: #141e23; --panel-2: #1b2830; --well: #10181c;
+  --line: #22313a; --line-2: #2e414b; --ink: #e2eef1; --ink-2: #a3bac1; --muted: #7f99a1;
+  --accent: #33cfe0; --accent-ink: #021517; --screw: #05090b; --led-off: #22313a;
+  --bevel: rgb(200 245 255 / .05); --shade: rgb(0 0 0 / .5);
+  color-scheme: dark;
+}
+[data-theme="contrast"] {
+  --bg: #000; --rail: #000; --panel: #000; --panel-2: #000; --well: #000;
+  --line: #fff; --line-2: #fff; --ink: #fff; --ink-2: #fff; --muted: #e6e6e6;
+  --accent: #ffe100; --accent-ink: #000; --screw: #fff; --led-off: #555;
+  --bevel: transparent; --shade: transparent;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-picked]) {
+    --bg: #cfd3d6; --rail: #c3c8cc; --panel: #f5f5f4; --panel-2: #ffffff; --well: #eceeee;
+    --line: #d6d9db; --line-2: #b9bec2; --ink: #1b1d1f; --ink-2: #454a4f; --muted: #5f656a;
+    --accent: #00707e; --accent-ink: #ffffff; --screw: #9aa1a6; --led-off: #c9cdd0;
+    --bevel: rgb(255 255 255 / .7); --shade: rgb(40 48 54 / .18);
+    color-scheme: light;
+  }
+}
+:root { --ok: #0ca30c; --warn: #fab219; --fail: #d03b3b; }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 17px/1.62 "Atkinson Next", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-underline-offset: 3px; }
+code, kbd, .mono { font-family: "Atkinson Mono", Consolas, monospace; font-size: .9em; overflow-wrap: anywhere; }
+kbd { border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--panel-2); }
+.silk { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); }
+
+/* ---- top faceplate ---- */
+.top {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 16px;
+  padding: 10px 22px; background: var(--panel); border-bottom: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 var(--bevel), 0 2px 10px var(--shade);
+}
+.screw { width: 9px; height: 9px; border-radius: 50%; background: var(--screw); box-shadow: inset 0 0 0 1px var(--line-2); flex: none; }
+.word { font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 26px; letter-spacing: .06em; line-height: 1; }
+.top .silk { font-size: 13px; }
+.materials { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.materials button {
+  width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line-2); cursor: pointer; padding: 0;
+  background: conic-gradient(var(--a) 0 50%, var(--b) 0 100%);
+}
+.materials button[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+.materials button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+/* ---- layout ---- */
+.shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); gap: 40px; max-width: 1180px; margin: 0 auto; padding: 28px 22px 80px; }
+@media (max-width: 880px) { .shell { grid-template-columns: minmax(0, 1fr); gap: 18px; } }
+
+/* ---- the rack (table of contents) ---- */
+.rack { position: sticky; top: 78px; align-self: start; max-height: calc(100vh - 96px); overflow: auto; padding: 10px 12px;
+  background: var(--rail); border: 1px solid var(--line); border-radius: 6px;
+  background-image: repeating-linear-gradient(var(--rail) 0 14px, var(--line) 14px 15px); background-size: 8px 15px; background-repeat: repeat-y; background-position: 4px 0; }
+@media (max-width: 880px) { .rack { position: static; max-height: none; } }
+.rack ol { list-style: none; margin: 0; padding: 0 0 0 10px; display: grid; gap: 5px; }
+.rack li + li { margin-top: 0; }
+.unit a {
+  display: grid; grid-template-columns: 9px 1fr 10px 9px; gap: 10px; align-items: center; text-decoration: none;
+  padding: 7px 10px; border-radius: 3px; color: var(--ink-2);
+  background: linear-gradient(var(--panel-2), var(--panel)); box-shadow: inset 0 1px 0 var(--bevel), 0 1px 2px var(--shade);
+  font-family: "Barlow Condensed", sans-serif; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; font-size: 14px;
+}
+.unit a:hover { color: var(--ink); }
+.unit a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.led { width: 10px; height: 10px; border-radius: 50%; background: var(--led-off); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .25); transition: background .3s, box-shadow .3s; }
+.unit.read .led { background: var(--ok); box-shadow: 0 0 6px 1px rgb(12 163 12 / .6); }
+.unit.here a { color: var(--ink); }
+.unit.here .led { background: var(--accent); box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent) 60%, transparent); animation: tone 1.6s ease-in-out infinite; }
+@keyframes tone { 50% { box-shadow: 0 0 2px 0 color-mix(in srgb, var(--accent) 30%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .unit.here .led { animation: none; } }
+.rack-foot { margin: 12px 0 2px 10px; font-size: 12px; color: var(--muted); }
+
+/* ---- content ---- */
+main { max-width: 760px; }
+.hero { padding: 8px 0 18px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.hero h1 { font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: clamp(40px, 6vw, 64px); line-height: .98; letter-spacing: .01em; margin: 10px 0 14px; }
+.lede { font-size: 20px; color: var(--ink-2); margin: 0; }
+section { padding: 34px 0 6px; }
+h2 { font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 34px; line-height: 1.05; letter-spacing: .02em; margin: 0 0 12px; display: flex; gap: 12px; align-items: baseline; }
+h2 .no { font-size: 15px; letter-spacing: .14em; color: var(--accent); font-weight: 600; }
+h3 { font-size: 18px; margin: 22px 0 6px; }
+p { margin: 0 0 12px; }
+ul, ol.steps { margin: 0 0 14px; padding-left: 22px; }
+li + li { margin-top: 4px; }
+.plate { background: linear-gradient(var(--panel-2), var(--panel)); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; margin: 14px 0; box-shadow: inset 0 1px 0 var(--bevel); }
+.plate > :last-child { margin-bottom: 0; }
+.note { border-left: 3px solid var(--accent); padding: 8px 14px; background: var(--well); margin: 14px 0; border-radius: 0 4px 4px 0; }
+
+ol.steps { list-style: none; padding: 0; counter-reset: s; display: grid; gap: 10px; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 42px 1fr; gap: 12px; margin: 0; }
+ol.steps > li::before { content: counter(s, decimal-leading-zero); font-family: "Barlow Condensed", sans-serif; font-weight: 700; font-size: 22px; color: var(--accent); line-height: 1.3; }
+
+table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 16px; }
+th { text-align: left; font-family: "Barlow Condensed", sans-serif; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; font-size: 13px; color: var(--ink-2); border-bottom: 2px solid var(--line-2); padding: 6px 10px 6px 0; }
+td { border-bottom: 1px solid var(--line); padding: 9px 10px 9px 0; vertical-align: top; }
+td.k { white-space: nowrap; font-weight: 700; }
+
+/* certifier readout */
+.readout { display: grid; gap: 6px; margin: 14px 0; }
+.lvl { display: grid; grid-template-columns: 46px 1fr; gap: 14px; align-items: start; padding: 10px 14px; border-radius: 4px; background: var(--well); border: 1px solid var(--line); }
+.lvl .tag { font-family: "Atkinson Mono", monospace; font-weight: 600; font-size: 14px; text-align: center; border-radius: 3px; padding: 2px 0; background: var(--panel-2); border: 1px solid var(--line-2); }
+.lvl b { display: block; }
+.lvl span { color: var(--ink-2); font-size: 15.5px; }
+.lvl.quick .tag { border-color: var(--accent); }
+
+.status { display: inline-flex; align-items: center; gap: 8px; font-family: "Barlow Condensed", sans-serif; font-weight: 700; letter-spacing: .08em; }
+.dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.fail { background: var(--fail); } .dot.off { background: var(--led-off); border: 1px solid var(--line-2); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.chip { border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 10px; font-size: 15px; background: var(--panel); }
+.chip.full { border-color: var(--ok); }
+.chip.full::after { content: " · full"; color: var(--muted); font-size: 13px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+.grid2 .plate { margin: 0; }
+.grid2 h3 { margin-top: 0; }
+@media (max-width: 880px) {
+  .rack ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .unit a { font-size: 13px; padding: 6px 8px; gap: 8px; }
+}
+@media (max-width: 560px) {
+  .top { padding: 10px 16px; gap: 10px; }
+  .top > .silk, .top > .screw { display: none; }
+  .materials { gap: 5px; }
+  .materials button { width: 24px; height: 24px; }
+  .shell { padding: 18px 16px 60px; }
+  .rack ol { grid-template-columns: 1fr 1fr; gap: 4px; padding-left: 8px; }
+  .unit a { grid-template-columns: 1fr 10px; }
+  .unit a .screw { display: none; }
+  .lede { font-size: 18px; }
+  h2 { font-size: 30px; }
+  td.k { white-space: normal; }
+}
+footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="screw" aria-hidden="true"></span>
+  <span class="word">BACKPLANE</span>
+  <span class="silk">Guide · v{{VERSION}}</span>
+  <div class="materials" role="group" aria-label="Material">
+    <button type="button" data-t="rack" title="Rack" aria-label="Rack theme" style="--a:#1d2023;--b:#2cc4d3"></button>
+    <button type="button" data-t="aluminum" title="Aluminum" aria-label="Aluminum theme" style="--a:#f5f5f4;--b:#00707e"></button>
+    <button type="button" data-t="copper" title="Copper" aria-label="Copper theme" style="--a:#231b16;--b:#e0915a"></button>
+    <button type="button" data-t="fiber" title="Fiber" aria-label="Fiber theme" style="--a:#141e23;--b:#33cfe0"></button>
+    <button type="button" data-t="contrast" title="High contrast" aria-label="High contrast theme" style="--a:#000;--b:#ffe100"></button>
+  </div>
+  <span class="screw" aria-hidden="true"></span>
+</header>
+
+<div class="shell">
+  <nav class="rack" aria-label="Sections">
+    <ol id="toc"></ol>
+    <div class="rack-foot">LEDs light up as you read.</div>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <div class="silk">The manual</div>
+      <h1>Your whole backend, on one rack.</h1>
+      <p class="lede">Backplane sets up the plumbing a business runs on (payments, a database, email, file storage and a little server code) across the services you already use, then keeps proving it all works.</p>
+    </div>
+
+    <section id="start" data-title="Start here">
+      <h2><span class="no">01</span>Start here</h2>
+      <p>Most businesses need the same pieces wired together: take a payment, record the order, send the receipt, deliver the file, keep customers' data private. Doing that across five dashboards is where things quietly break.</p>
+      <p>Backplane does it from one place. You pick a preset for your kind of business (or describe it in plain words), read a plain-English work order, approve it, and Backplane builds every piece in the right order. Then it tests every connection, including a real test purchase where nothing is charged.</p>
+      <div class="plate">
+        <div class="silk">Built on</div>
+        <div class="chips"><span class="chip">Cloudflare</span><span class="chip">Supabase</span><span class="chip">Stripe</span><span class="chip">Resend</span><span class="chip">GitHub</span></div>
+        <p style="margin-top:8px">Everything runs in <b>your own accounts</b>. You own it, and you can export it any time.</p>
+      </div>
+    </section>
+
+    <section id="install" data-title="Install">
+      <h2><span class="no">02</span>Install &amp; first launch</h2>
+      <ol class="steps">
+        <li><div>Double-click <b>Install Backplane.exe</b>. If Windows says <i>“Windows protected your PC”</i>, choose <b>More info → Run anyway</b>. Backplane isn't code-signed yet, so SmartScreen doesn't recognise it.</div></li>
+        <li><div>Click through Setup. No administrator password is needed: Backplane installs for your Windows account only, in <code>%LOCALAPPDATA%\Programs\Backplane</code>.</div></li>
+        <li><div>Open Backplane. A six-page welcome guide explains the basics and ends with a choice: <b>Practice first</b> or <b>Set up a real backend</b>.</div></li>
+      </ol>
+      <div class="note">Backplane draws its window with Microsoft Edge WebView2, which Windows 11 and most Windows 10 PCs already have. If yours doesn't, Setup offers Microsoft's free download; until it's installed, Backplane opens in your web browser instead and works the same way.</div>
+    </section>
+
+    <section id="bench" data-title="The Bench">
+      <h2><span class="no">03</span>Practice on the Bench</h2>
+      <p>The Bench is a practice sandbox. It starts pretend versions of Cloudflare, Supabase, Stripe, Resend and GitHub inside Backplane, with practice accounts already connected, so you can run a complete build and certification without signing up for anything.</p>
+      <ul>
+        <li><b>Break things on purpose.</b> Delete a bucket, disable a webhook or turn off row-level security, then watch Backplane notice, explain what broke, and repair it.</li>
+        <li><b>Nothing real is touched.</b> Practice backends live only on the Bench and are cleared when you start or stop it.</li>
+        <li>It works offline.</li>
+      </ul>
+    </section>
+
+    <section id="accounts" data-title="Accounts">
+      <h2><span class="no">04</span>Connect your accounts</h2>
+      <p>Open <b>Accounts → Connect an account</b>. Each provider has a short guide that opens the right page, with the permissions pre-selected where the provider allows. All five have free tiers that cover a new business.</p>
+      <table>
+        <thead><tr><th>Service</th><th>What it does for you</th></tr></thead>
+        <tbody>
+          <tr><td class="k">Cloudflare</td><td>Runs your backend code (a Worker), private file storage, and your domain's DNS.</td></tr>
+          <tr><td class="k">Supabase</td><td>Your database, customer sign-in and row-level security.</td></tr>
+          <tr><td class="k">Stripe</td><td>Checkout, subscriptions, refunds, and payment notifications.</td></tr>
+          <tr><td class="k">Resend</td><td>Receipts and notification email from your own domain.</td></tr>
+          <tr><td class="k">GitHub</td><td>A private repository for the generated code, deployed automatically.</td></tr>
+        </tbody>
+      </table>
+      <p>Presets can also link <b>add-ons</b> for single jobs: text messages (Twilio), error monitoring (Sentry), analytics (PostHog), media (Cloudinary), caching (Upstash), hosting (Vercel) and enterprise sign-in (Clerk). Add-ons are connected and watched as part of your backend's health; Backplane doesn't create anything inside them yet, and the app says so.</p>
+      <p>Each connection is checked right away: is the key valid, is it the right account, does it have the permissions Backplane needs.</p>
+    </section>
+
+    <section id="build" data-title="Build">
+      <h2><span class="no">05</span>Build a backend</h2>
+      <p>This really is a sequence, and Backplane never skips a step.</p>
+      <ol class="steps">
+        <li><div><b>Describe.</b> In <b>Backends → New backend</b>, pick a preset by kind of business, or describe what you need in plain words. Answer a few questions: price, domain, what customers receive.</div></li>
+        <li><div><b>Review the work order.</b> Backplane reads what already exists and lists exactly what it would create or change, why, and an honest cost estimate. Nothing has happened yet.</div></li>
+        <li><div><b>Approve &amp; build.</b> Steps run in dependency order, with retries and a checkpoint after each one. If a step fails, fix the cause and press <b>Resume</b>: finished steps aren't repeated. A finished build can be rolled back.</div></li>
+        <li><div><b>Certify.</b> Six levels of checks, from “is the key valid” to a full test purchase that is cleaned up afterwards.</div></li>
+        <li><div><b>Monitor.</b> Checks keep running on a schedule, and you're told the moment something changes.</div></li>
+      </ol>
+      <h3>Describing it in your own words</h3>
+      <p>Backplane matches your description to a preset on this PC, with no internet needed. If you add your own Anthropic API key in <b>Settings</b>, the optional Claude assistant can suggest a better fit. It receives only the description you typed (never your keys or project data), and it can only suggest: you still review and approve the plan.</p>
+      <h3>Environments</h3>
+      <p>Each backend can have <b>development</b>, <b>staging</b> and <b>production</b> environments, kept separate. Production is protected: deleting or rolling it back asks you to type the project name, and live Stripe keys are refused anywhere else.</p>
+      <h3>Already have a setup?</h3>
+      <p><b>Backends → Import existing</b> adopts resources you built elsewhere so Backplane can watch them. Imported backends are watched, never changed.</p>
+    </section>
+
+    <section id="checks" data-title="Six checks">
+      <h2><span class="no">06</span>The six checks</h2>
+      <p>Every connection is proven, not assumed. <b>Quick checks</b> run levels 1–4 and never write anything. <b>Full certifications</b> run all six, using clearly marked test records that are removed afterwards. No card is ever charged.</p>
+      <div class="readout">
+        <div class="lvl quick"><span class="tag">L1</span><div><b>Provider connection</b><span>Keys are valid, the right account, the permissions Backplane needs, APIs reachable.</span></div></div>
+        <div class="lvl quick"><span class="tag">L2</span><div><b>Resources exist</b><span>Everything that was built still exists; nothing deleted or renamed outside Backplane.</span></div></div>
+        <div class="lvl quick"><span class="tag">L3</span><div><b>Configuration matches</b><span>Live settings match what was set up: bindings, secrets, webhooks, row-level security, email DNS.</span></div></div>
+        <div class="lvl quick"><span class="tag">L4</span><div><b>Connections work</b><span>The Worker really reaches the database, storage and email; Stripe really delivers to the Worker.</span></div></div>
+        <div class="lvl"><span class="tag">L5</span><div><b>Functions work</b><span>Each function works with safe test data: write and read a row, store and fetch a file, send to a test inbox, sign in a test user.</span></div></div>
+        <div class="lvl"><span class="tag">L6</span><div><b>End-to-end journey</b><span>The whole customer journey, e.g. a signed test purchase through checkout, order, download link and email, then everything is cleaned up.</span></div></div>
+      </div>
+      <h3>Reading the result</h3>
+      <table>
+        <thead><tr><th>Status</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td class="k"><span class="status"><i class="dot ok"></i>FULLY OPERATIONAL</span></td><td>A full certification passed, including the end-to-end journey.</td></tr>
+          <tr><td class="k"><span class="status"><i class="dot ok"></i>OPERATIONAL</span></td><td>Everything checked is healthy (a quick check, or a backend without a journey test).</td></tr>
+          <tr><td class="k"><span class="status"><i class="dot warn"></i>NEEDS ATTENTION</span></td><td>It works, but something needs you, such as a product file not uploaded yet.</td></tr>
+          <tr><td class="k"><span class="status"><i class="dot fail"></i>DEGRADED</span></td><td>Something failed, but the core of the business still works.</td></tr>
+          <tr><td class="k"><span class="status"><i class="dot fail"></i>BROKEN</span></td><td>A critical piece failed. Customers are affected; the fix is shown first.</td></tr>
+          <tr><td class="k"><span class="status"><i class="dot off"></i>NOT BUILT YET</span></td><td>Nothing to check until the first build.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="presets" data-title="Presets">
+      <h2><span class="no">07</span>Presets</h2>
+      <p>25 presets, grouped by the kind of business. Each one lists which service handles which task, and the optional add-ons that suit it.</p>
+      <div class="grid2">
+        <div class="plate"><h3>Retail &amp; e-commerce</h3><div class="chips"><span class="chip full">E-commerce Store</span><span class="chip">Marketplace</span><span class="chip">Restaurant Ordering</span></div></div>
+        <div class="plate"><h3>Digital products</h3><div class="chips"><span class="chip full">Software Store</span><span class="chip full">Digital Downloads</span><span class="chip full">Photography Store</span><span class="chip full">License Server</span></div></div>
+        <div class="plate"><h3>Subscriptions &amp; memberships</h3><div class="chips"><span class="chip">Subscription SaaS</span><span class="chip">Membership Site</span><span class="chip">Newsletter</span></div></div>
+        <div class="plate"><h3>Services &amp; appointments</h3><div class="chips"><span class="chip">Booking System</span><span class="chip">Contractor Portal</span><span class="chip">Client Portal</span></div></div>
+        <div class="plate"><h3>Customers &amp; support</h3><div class="chips"><span class="chip">CRM</span><span class="chip">Support / Ticket System</span><span class="chip">Admin Dashboard Backend</span></div></div>
+        <div class="plate"><h3>Apps &amp; software</h3><div class="chips"><span class="chip">SaaS</span><span class="chip">Free SaaS</span><span class="chip">Mobile Application</span><span class="chip">Game Backend</span><span class="chip">API Service</span></div></div>
+        <div class="plate"><h3>Community &amp; realtime</h3><div class="chips"><span class="chip">Realtime Chat</span></div></div>
+        <div class="plate"><h3>Data, files &amp; automation</h3><div class="chips"><span class="chip">File Sharing</span><span class="chip">Webhook Relay</span><span class="chip">AI / RAG Application</span></div></div>
+      </div>
+      <p style="margin-top:14px"><b>Full</b> presets: Backplane builds everything, writes the backend code, and proves the whole customer journey end to end. <b>Core</b> presets (the rest): Backplane builds the database with row-level security, sign-in, storage, email and a monitored API Worker, and proves each user's data stays private. Your app's own screens and business logic plug into it.</p>
+    </section>
+
+    <section id="monitor" data-title="Monitoring">
+      <h2><span class="no">08</span>Monitoring &amp; alerts</h2>
+      <ul>
+        <li>New backends get a quick check every 30 minutes and a full certification once a day, plus a full check after every build. Change the schedule per backend on its <b>Settings</b> tab.</li>
+        <li>When a status changes, Windows shows a notification.</li>
+        <li><b>Background checks while Backplane is closed</b> are off until you turn them on in <b>Settings</b>. They add an hourly Windows task named “Backplane Monitor”, with no administrator rights needed.</li>
+        <li>Backplane also watches the providers themselves: when an API it uses announces a change or retirement, it's listed with its date under <b>Settings → Provider changes</b>.</li>
+        <li><b>Register</b> is one log for every build and check across all providers, with keys and secrets scrubbed out.</li>
+      </ul>
+    </section>
+
+    <section id="repair" data-title="Repairs">
+      <h2><span class="no">09</span>When something breaks</h2>
+      <p>If something changes outside Backplane (a deleted bucket, a disabled webhook, row-level security switched off, an expired key), the next check says:</p>
+      <ul>
+        <li><b>what broke</b>, in plain English, and when;</li>
+        <li><b>what's affected</b> (“Download delivery”) and, just as important, <b>what still works</b>;</li>
+        <li><b>the safe fix</b>. Repairs go through the same work order and approval as a build, so you see exactly what will change.</li>
+      </ul>
+      <p>To see how far a problem reaches, open the backend's <b>Rack</b> tab and click a unit or a patch cord. Like a cable tracer's tone, the path lights up downstream and stops at the first fault.</p>
+    </section>
+
+    <section id="code" data-title="Your code">
+      <h2><span class="no">10</span>Your code</h2>
+      <p>For backends that need server code, Backplane writes it for you and shows it on the <b>Code</b> tab. Every file is marked:</p>
+      <table>
+        <tbody>
+          <tr><td class="k">GENERATED</td><td>Written by Backplane; updated when you change the backend.</td></tr>
+          <tr><td class="k">USER MODIFIED</td><td>You changed it. Backplane never overwrites it without asking.</td></tr>
+          <tr><td class="k">SYSTEM CONFIG</td><td>Deployment settings Backplane keeps in step with what it deploys.</td></tr>
+        </tbody>
+      </table>
+      <p>With GitHub connected, the code goes to a private repository and deploys automatically on every change. You can also export a backend at any time: its manifest, code, a Wrangler config and an OpenTofu starting point.</p>
+    </section>
+
+    <section id="safety" data-title="Safety">
+      <h2><span class="no">11</span>Safety &amp; secrets</h2>
+      <ul>
+        <li><b>Keys stay on this computer,</b> encrypted by Windows for your account. They're never written to project files, exports, generated code or logs.</li>
+        <li><b>Nothing happens without a plan you approve.</b> The assistant only suggests; it never builds or deploys.</li>
+        <li><b>Production is protected.</b> Destructive steps ask you to type the project name.</li>
+        <li><b>Test data is cleaned up.</b> Certification uses marked probe records, test inboxes and expired checkout sessions.</li>
+        <li><b>You're not locked in.</b> Export any backend whenever you like.</li>
+      </ul>
+    </section>
+
+    <section id="look" data-title="Look &amp; feel">
+      <h2><span class="no">12</span>Look &amp; feel</h2>
+      <p>Every theme is a material from real rack gear: <b>Rack</b> (black anodized), <b>Aluminum</b> (brushed, daylight), <b>Bench</b> (ESD mat, probe blue), <b>Copper</b>, <b>Fiber</b> (aqua at night), <b>High contrast</b>, and <b>System</b>, which follows Windows light or dark. The swatches at the top of this page switch this guide too.</p>
+      <p>In <b>Settings</b> you can also change the text size and density, turn off motion (no blinking LEDs or cable tone), and show advanced options everywhere.</p>
+    </section>
+
+    <section id="uninstall" data-title="Uninstall">
+      <h2><span class="no">13</span>Uninstall &amp; your data</h2>
+      <p>Run <b>Uninstall Backplane.exe</b> from the download folder, or open <b>Settings → Apps → Installed apps → Backplane → Uninstall</b>.</p>
+      <ul>
+        <li>Uninstalling <b>does not</b> remove what Backplane built in your Cloudflare, Supabase, Stripe, Resend or GitHub accounts. To remove those, open the backend and use <b>Settings → Tear down</b> first.</li>
+        <li>You choose whether to keep your Backplane data (backends, history, saved connections) for a reinstall. It lives in <code>%APPDATA%\Backplane</code>.</li>
+        <li>The background task, notifications registration and shortcuts are always removed. Exports in <code>Downloads\Backplane exports</code> are yours and stay.</li>
+      </ul>
+    </section>
+
+    <section id="help" data-title="Troubleshooting">
+      <h2><span class="no">14</span>Troubleshooting</h2>
+      <h3>Windows says it protected my PC</h3>
+      <p>Choose <b>More info → Run anyway</b>. To confirm the download is intact, compare <code>Get-FileHash ".\Install Backplane.exe"</code> in PowerShell with <code>SHA256SUMS.txt</code>.</p>
+      <h3>Backplane opened in my browser</h3>
+      <p>The WebView2 Runtime is missing. Install it from Microsoft (<a href="https://go.microsoft.com/fwlink/p/?LinkId=2124703">direct download</a>) and reopen Backplane. Everything works the same in the browser meanwhile: a small Backplane box stays open while you work, and choosing <b>OK</b> in it quits Backplane.</p>
+      <h3>Nothing happens when I open it again</h3>
+      <p>Backplane is already running; the existing window comes to the front. Check the taskbar.</p>
+      <h3>A step failed during a build</h3>
+      <p>The card under the progress bar says what went wrong and how to fix it. Fix the cause, then press <b>Resume</b>. Steps that already finished aren't repeated.</p>
+      <h3>Still stuck?</h3>
+      <p>Open <b>Register</b>, filter to the backend, and include what it shows when you write to <a href="https://www.safisolutions.org/support.html">support</a>. The log is already scrubbed of keys.</p>
+    </section>
+
+    <footer>Backplane v{{VERSION}} · © 2026 Safi Solutions · <a href="https://www.safisolutions.org">safisolutions.org</a></footer>
+  </main>
+</div>
+
+<script>
+(() => {
+  const root = document.documentElement;
+  const pick = (t, save) => {
+    root.dataset.theme = t;
+    root.dataset.picked = "";
+    document.querySelectorAll(".materials button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
+    if (save) { try { localStorage.setItem("bp-guide-theme", t); } catch (e) {} }
+  };
+  let saved = null;
+  try { saved = localStorage.getItem("bp-guide-theme"); } catch (e) {}
+  if (saved) pick(saved, false);
+  else {
+    const light = matchMedia("(prefers-color-scheme: light)").matches;
+    document.querySelectorAll(".materials button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.t === (light ? "aluminum" : "rack"))));
+  }
+  document.querySelectorAll(".materials button").forEach((b) => b.addEventListener("click", () => pick(b.dataset.t, true)));
+
+  // The rack: one faceplate per section. Its LED goes green once the
+  // section has been read and shows the cable tone on the one in view.
+  const toc = document.getElementById("toc");
+  const sections = [...document.querySelectorAll("main section")];
+  const units = sections.map((s) => {
+    const li = document.createElement("li");
+    li.className = "unit";
+    li.innerHTML = `<a href="#${s.id}"><span class="screw" aria-hidden="true"></span><span></span><span class="led" aria-hidden="true"></span><span class="screw" aria-hidden="true"></span></a>`;
+    li.querySelector("a span:nth-child(2)").textContent = s.dataset.title;
+    toc.appendChild(li);
+    return li;
+  });
+  const update = () => {
+    const line = window.innerHeight * 0.35;
+    let here = 0;
+    sections.forEach((s, i) => { if (s.getBoundingClientRect().top <= line) here = i; });
+    const atEnd = window.innerHeight + window.scrollY >= document.body.scrollHeight - 4;
+    if (atEnd) here = sections.length - 1;
+    units.forEach((u, i) => {
+      u.classList.toggle("here", i === here);
+      u.classList.toggle("read", i < here || (atEnd && i <= here));
+      const a = u.querySelector("a");
+      if (i === here) a.setAttribute("aria-current", "location"); else a.removeAttribute("aria-current");
+    });
+  };
+  addEventListener("scroll", update, { passive: true });
+  addEventListener("resize", update);
+  update();
+})();
+</script>
+</body>
+</html>

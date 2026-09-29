@@ -1,0 +1,84 @@
+BACKPLANE {{VERSION}}
+Set up and monitor your business backend from one place.
+Safi Solutions - https://www.safisolutions.org
+======================================================================
+
+WHAT'S IN THIS FOLDER
+
+  Install Backplane.exe     Installs Backplane for your Windows account.
+  Uninstall Backplane.exe   Removes it again (same as Settings > Apps).
+  Guide\                    The Backplane guide. Opens in your browser.
+  Legal\                    License and third-party notices.
+  SHA256SUMS.txt            Fingerprints to check the download is intact.
+
+
+INSTALL (about a minute)
+
+  1. Double-click "Install Backplane.exe".
+  2. If Windows says "Windows protected your PC", choose
+     More info > Run anyway. Backplane isn't code-signed yet, so
+     SmartScreen doesn't recognise it.
+  3. Click through Setup. No administrator password is needed:
+     Backplane installs for your Windows account only, in
+     %LOCALAPPDATA%\Programs\Backplane.
+
+  Backplane draws its window with Microsoft Edge WebView2, which
+  Windows 11 and most Windows 10 PCs already have. If yours doesn't,
+  Setup offers Microsoft's free download; until then Backplane opens
+  in your web browser instead.
+
+
+FIRST STEPS
+
+  - The welcome guide opens on first launch (6 short pages).
+  - Try the Bench first. It runs a practice backend with pretend
+    accounts, so you can watch a full build, break things on purpose
+    and repair them. Nothing real is touched.
+  - When you're ready: Accounts > Connect an account, then
+    Backends > New backend. Pick one of 25 presets (e-commerce store,
+    CRM, booking system, SaaS...) or describe your business in plain
+    words.
+  - Nothing is ever created until you approve a plan.
+
+
+UNINSTALL
+
+  Double-click "Uninstall Backplane.exe" here, or open
+  Settings > Apps > Installed apps > Backplane > Uninstall.
+
+  - Uninstalling does NOT remove what Backplane built in your
+    Cloudflare, Supabase, Stripe, Resend or GitHub accounts. Those keep
+    running. To remove them, open the backend in Backplane first and use
+    Settings > Tear down.
+  - You'll be asked whether to keep your Backplane data (backends,
+    history, saved connections) for a later reinstall. It lives in
+    %APPDATA%\Backplane.
+  - Files you exported stay in Downloads\Backplane exports.
+
+
+CHECK THE DOWNLOAD (optional)
+
+  Open PowerShell in this folder and run:
+    Get-FileHash ".\Install Backplane.exe" -Algorithm SHA256
+  The result should match the line in SHA256SUMS.txt.
+
+
+NEEDS
+
+  - Windows 10 or 11, 64-bit (x64).
+  - An internet connection to build and monitor real backends.
+    The Bench works offline.
+
+
+YOUR DATA
+
+  - Account keys are encrypted with Windows (DPAPI) for your Windows
+    account and are only ever sent to the service they belong to.
+  - Logs and exports are scrubbed of keys and secrets.
+  - The optional Claude assistant (off until you add your own key)
+    only receives the plain-English description you type.
+
+
+HELP
+
+  https://www.safisolutions.org/support.html

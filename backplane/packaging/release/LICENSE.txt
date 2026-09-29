@@ -1,0 +1,24 @@
+Backplane {{VERSION}}
+Copyright (c) 2026 Safi Solutions. All rights reserved.
+
+Backplane is licensed, not sold. Your use of Backplane is governed by the
+Safi Solutions Terms of Service: https://www.safisolutions.org/terms.html
+
+You may install and use Backplane on computers you own or control. You may
+not sell, sublicense or redistribute Backplane, or remove its notices.
+
+Backplane connects to third-party services (for example Cloudflare,
+Supabase, Stripe, Resend and GitHub) using accounts and keys you provide.
+Those services are governed by their own terms, and you are responsible for
+the resources and charges in your accounts. Backplane shows a plan and waits
+for your approval before it creates, changes or deletes anything.
+
+BACKPLANE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT, TO THE EXTENT
+PERMITTED BY LAW. IN NO EVENT SHALL SAFI SOLUTIONS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH
+BACKPLANE OR ITS USE, TO THE EXTENT PERMITTED BY LAW.
+
+Backplane includes open-source components; their licenses are listed in
+THIRD-PARTY-NOTICES.txt.

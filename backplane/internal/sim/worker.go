@@ -1,0 +1,687 @@
+package sim
+
+import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// wenv is a simulated Worker's environment (vars, secrets and bindings).
+type wenv struct {
+	name    string
+	vars    map[string]string
+	r2      map[string]string // binding -> bucket
+	kv      map[string]string // binding -> namespace id
+	baseURL string
+}
+
+func (e *wenv) get(k string) string { return e.vars[k] }
+
+// worker runs the simulated generated Worker. It mirrors the JavaScript
+// Worker Backplane generates (same routes, same responses, same checks) and
+// talks to the simulated providers over HTTP exactly like the real one.
+func (s *Server) worker(w http.ResponseWriter, r *http.Request, rest string) {
+	p := segs(rest)
+	if len(p) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	s.mu.Lock()
+	sc := s.cf.scripts[p[0]]
+	if sc == nil || !sc.WorkersDev {
+		s.mu.Unlock()
+		w.WriteHeader(404)
+		io.WriteString(w, "There is nothing here yet.")
+		return
+	}
+	env := &wenv{name: sc.Name, vars: map[string]string{}, r2: map[string]string{}, kv: map[string]string{}, baseURL: s.Base + "/__workers/" + sc.Name}
+	for _, b := range sc.Bindings {
+		switch b["type"] {
+		case "plain_text":
+			env.vars[str(b["name"])] = str(b["text"])
+		case "r2_bucket":
+			env.r2[str(b["name"])] = str(b["bucket_name"])
+		case "kv_namespace":
+			env.kv[str(b["name"])] = str(b["namespace_id"])
+		}
+	}
+	for k, v := range sc.Secrets {
+		env.vars[k] = v
+	}
+	s.mu.Unlock()
+	path := "/" + strings.Join(p[1:], "/")
+	if env.get("TEMPLATE") != "" {
+		s.dataWorker(w, r, env, path)
+		return
+	}
+	s.commerceWorker(w, r, env, path)
+}
+
+func wjson(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func safeEq(a, b string) bool { return hmac.Equal([]byte(a), []byte(b)) }
+
+func hmacHexS(secret, data string) string {
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte(data))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+func b64u(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
+// ---- helpers that call the simulated providers over HTTP ----
+
+func (s *Server) wcall(method, u string, headers map[string]string, body []byte) (int, []byte, error) {
+	req, err := http.NewRequest(method, u, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, b, nil
+}
+
+func (s *Server) sbw(env *wenv, method, path string, body any, prefer string) ([]map[string]any, error) {
+	key := env.get("SUPABASE_SECRET_KEY")
+	h := map[string]string{"apikey": key, "Content-Type": "application/json"}
+	if strings.HasPrefix(key, "eyJ") {
+		h["Authorization"] = "Bearer " + key
+	}
+	if prefer != "" {
+		h["Prefer"] = prefer
+	}
+	var bs []byte
+	if body != nil {
+		bs, _ = json.Marshal(body)
+	}
+	status, out, err := s.wcall(method, env.get("SUPABASE_URL")+"/rest/v1/"+path, h, bs)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return nil, fmt.Errorf("Supabase %s %s → %d: %s", method, strings.SplitN(path, "?", 2)[0], status, string(out))
+	}
+	var rows []map[string]any
+	if len(out) > 0 {
+		_ = json.Unmarshal(out, &rows)
+	}
+	return rows, nil
+}
+
+func (s *Server) stripeW(env *wenv, method, path string, form url.Values) (map[string]any, error) {
+	h := map[string]string{"Authorization": "Bearer " + env.get("STRIPE_SECRET_KEY"), "Stripe-Version": "2026-08-26.dahlia", "Content-Type": "application/x-www-form-urlencoded"}
+	var body []byte
+	if form != nil {
+		body = []byte(form.Encode())
+	}
+	status, out, err := s.wcall(method, s.Base+"/stripe"+path, h, body)
+	if err != nil {
+		return nil, err
+	}
+	var data map[string]any
+	_ = json.Unmarshal(out, &data)
+	if status >= 300 {
+		msg := "error"
+		if e, ok := data["error"].(map[string]any); ok {
+			msg = str(e["message"])
+		}
+		return nil, fmt.Errorf("Stripe %s → %d: %s", path, status, msg)
+	}
+	return data, nil
+}
+
+func (s *Server) resendW(env *wenv, method, path string, body any) (int, map[string]any) {
+	var bs []byte
+	if body != nil {
+		bs, _ = json.Marshal(body)
+	}
+	status, out, err := s.wcall(method, s.Base+"/resend"+path, map[string]string{"Authorization": "Bearer " + env.get("RESEND_API_KEY"), "Content-Type": "application/json"}, bs)
+	if err != nil {
+		return 599, map[string]any{"message": err.Error()}
+	}
+	var data map[string]any
+	_ = json.Unmarshal(out, &data)
+	return status, data
+}
+
+func verifyStripeSig(payload []byte, header, secret string) bool {
+	if header == "" || secret == "" {
+		return false
+	}
+	var t string
+	var sigs []string
+	for _, part := range strings.Split(header, ",") {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		if kv[0] == "t" {
+			t = kv[1]
+		} else if kv[0] == "v1" {
+			sigs = append(sigs, kv[1])
+		}
+	}
+	n, err := strconv.ParseInt(t, 10, 64)
+	if err != nil || time.Since(time.Unix(n, 0)) > 5*time.Minute || time.Until(time.Unix(n, 0)) > 5*time.Minute {
+		return false
+	}
+	want := hmacHexS(secret, t+"."+string(payload))
+	for _, s := range sigs {
+		if safeEq(s, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func bearerTok(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(h, "Bearer ") {
+		return h[7:]
+	}
+	return ""
+}
+
+// ---- commerce Worker ----
+
+var commerceRequired = []string{"SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "PRICE_ID", "RESEND_API_KEY", "FROM_EMAIL", "DOWNLOAD_SIGNING_SECRET", "BACKPLANE_PROBE_TOKEN", "PRODUCT_NAME"}
+
+func (s *Server) commerceWorker(w http.ResponseWriter, r *http.Request, env *wenv, path string) {
+	switch {
+	case path == "/":
+		wjson(w, 200, map[string]any{"service": env.get("WORKER_NAME"), "ok": true})
+	case path == "/checkout":
+		probe := r.Header.Get("X-Backplane-Probe")
+		isProbe := probe != "" && safeEq(probe, env.get("BACKPLANE_PROBE_TOKEN"))
+		form := url.Values{"mode": {"payment"}, "line_items[0][price]": {env.get("PRICE_ID")}, "line_items[0][quantity]": {"1"},
+			"success_url": {env.baseURL + "/thanks?session_id={CHECKOUT_SESSION_ID}"}, "metadata[product]": {env.get("PRODUCT_NAME")}}
+		if isProbe {
+			form.Set("metadata[backplane_probe]", "1")
+		}
+		cs, err := s.stripeW(env, "POST", "/v1/checkout/sessions", form)
+		if err != nil {
+			wjson(w, 500, map[string]any{"error": "internal error"})
+			return
+		}
+		if isProbe || strings.Contains(r.Header.Get("Accept"), "application/json") {
+			wjson(w, 200, map[string]any{"id": cs["id"], "url": cs["url"]})
+			return
+		}
+		http.Redirect(w, r, str(cs["url"]), 303)
+	case path == "/stripe/webhook" && r.Method == "POST":
+		s.commerceWebhook(w, r, env)
+	case path == "/download":
+		s.commerceDownload(w, r, env)
+	case path == "/resend/webhook" && r.Method == "POST":
+		payload, _ := io.ReadAll(r.Body)
+		id, ts, sig := r.Header.Get("svix-id"), r.Header.Get("svix-timestamp"), r.Header.Get("svix-signature")
+		secret := env.get("RESEND_WEBHOOK_SECRET")
+		if id == "" || ts == "" || secret == "" {
+			wjson(w, 400, map[string]any{"error": "invalid signature"})
+			return
+		}
+		key, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+		m := hmac.New(sha256.New, key)
+		m.Write([]byte(id + "." + ts + "." + string(payload)))
+		want := base64.StdEncoding.EncodeToString(m.Sum(nil))
+		ok := false
+		for _, part := range strings.Split(sig, " ") {
+			if kv := strings.SplitN(part, ",", 2); len(kv) == 2 && safeEq(kv[1], want) {
+				ok = true
+			}
+		}
+		if !ok {
+			wjson(w, 400, map[string]any{"error": "invalid signature"})
+			return
+		}
+		var evt map[string]any
+		_ = json.Unmarshal(payload, &evt)
+		if d, ok := evt["data"].(map[string]any); ok && d["email_id"] != nil {
+			_, _ = s.sbw(env, "PATCH", "email_log?resend_email_id=eq."+str(d["email_id"]), map[string]any{"status": strings.TrimPrefix(str(evt["type"]), "email.")}, "return=minimal")
+		}
+		wjson(w, 200, map[string]any{"received": true})
+	case path == "/license/validate" && r.Method == "POST":
+		var b struct{ Key string }
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		hash := hmacHexS(env.get("DOWNLOAD_SIGNING_SECRET"), "license-hash:"+strings.ToUpper(strings.TrimSpace(b.Key)))
+		rows, _ := s.sbw(env, "GET", "licenses?key_hash=eq."+hash+"&select=revoked,product,orders(status)", nil, "")
+		valid := len(rows) > 0 && rows[0]["revoked"] != true
+		wjson(w, 200, map[string]any{"valid": valid})
+	case path == "/links" && r.Method == "POST":
+		wjson(w, 200, map[string]any{"sent": true})
+	case path == "/__backplane/health":
+		s.commerceHealth(w, r, env)
+	case strings.HasPrefix(path, "/__backplane/probe/stripe/"):
+		if !safeEq(bearerTok(r), env.get("BACKPLANE_PROBE_TOKEN")) || env.get("BACKPLANE_PROBE_TOKEN") == "" {
+			wjson(w, 401, map[string]any{"error": "unauthorized"})
+			return
+		}
+		id := strings.TrimPrefix(path, "/__backplane/probe/stripe/")
+		s.mu.Lock()
+		ns := s.cf.kv[env.kv["PROBES"]]
+		var v kvVal
+		found := false
+		if ns != nil {
+			v, found = ns.Values["probe:cs:"+id]
+		}
+		s.mu.Unlock()
+		if !found {
+			wjson(w, 200, map[string]any{"found": false})
+			return
+		}
+		var out map[string]any
+		_ = json.Unmarshal([]byte(v.V), &out)
+		out["found"] = true
+		wjson(w, 200, out)
+	default:
+		wjson(w, 404, map[string]any{"error": "not found"})
+	}
+}
+
+func (s *Server) commerceWebhook(w http.ResponseWriter, r *http.Request, env *wenv) {
+	payload, _ := io.ReadAll(r.Body)
+	if !verifyStripeSig(payload, r.Header.Get("Stripe-Signature"), env.get("STRIPE_WEBHOOK_SECRET")) {
+		wjson(w, 400, map[string]any{"error": "invalid signature"})
+		return
+	}
+	var ev map[string]any
+	_ = json.Unmarshal(payload, &ev)
+	obj, _ := ev["data"].(map[string]any)["object"].(map[string]any)
+	meta, _ := obj["metadata"].(map[string]any)
+	isProbe := ev["livemode"] == false && str(meta["backplane_probe"]) == "1"
+	typ := str(ev["type"])
+	if typ == "checkout.session.expired" {
+		if str(meta["backplane_probe"]) == "1" {
+			s.mu.Lock()
+			if ns := s.cf.kv[env.kv["PROBES"]]; ns != nil {
+				bs, _ := json.Marshal(map[string]any{"event_id": ev["id"], "at": time.Now().UTC().Format(time.RFC3339)})
+				ns.Values["probe:cs:"+str(obj["id"])] = kvVal{V: string(bs), Exp: time.Now().Add(time.Hour)}
+			}
+			s.mu.Unlock()
+		}
+		wjson(w, 200, map[string]any{"received": true, "type": typ})
+		return
+	}
+	ins, err := s.sbw(env, "POST", "webhook_events?on_conflict=event_id", []map[string]any{{"event_id": ev["id"], "type": typ, "livemode": ev["livemode"] == true}}, "resolution=ignore-duplicates,return=representation")
+	if err != nil {
+		wjson(w, 500, map[string]any{"error": "internal error"})
+		return
+	}
+	if len(ins) == 0 {
+		prev, _ := s.sbw(env, "GET", "webhook_events?event_id=eq."+str(ev["id"])+"&select=processed_at", nil, "")
+		if len(prev) > 0 && prev[0]["processed_at"] != nil {
+			wjson(w, 200, map[string]any{"received": true, "duplicate": true, "type": typ})
+			return
+		}
+	}
+	result := map[string]any{"received": true, "type": typ}
+	switch typ {
+	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
+		probe, err := s.commerceFulfil(env, obj, isProbe)
+		if err != nil {
+			wjson(w, 500, map[string]any{"error": "internal error"})
+			return
+		}
+		if isProbe {
+			result["probe"] = probe
+		}
+	case "charge.refunded":
+		pi := str(obj["payment_intent"])
+		orders, _ := s.sbw(env, "PATCH", "orders?stripe_payment_intent=eq."+pi, map[string]any{"status": "refunded"}, "return=representation")
+		for _, o := range orders {
+			_, _ = s.sbw(env, "PATCH", "downloads?order_id=eq."+str(o["id"]), map[string]any{"revoked": true}, "return=minimal")
+		}
+	}
+	_, _ = s.sbw(env, "PATCH", "webhook_events?event_id=eq."+str(ev["id"]), map[string]any{"processed_at": time.Now().UTC().Format(time.RFC3339), "outcome": "ok"}, "return=minimal")
+	wjson(w, 200, result)
+}
+
+func (s *Server) commerceFulfil(env *wenv, cs map[string]any, isProbe bool) (map[string]any, error) {
+	if ps := str(cs["payment_status"]); ps != "paid" && ps != "no_payment_required" {
+		return nil, nil
+	}
+	details, _ := cs["customer_details"].(map[string]any)
+	email := str(details["email"])
+	meta, _ := cs["metadata"].(map[string]any)
+	orders, err := s.sbw(env, "POST", "orders?on_conflict=stripe_session_id", []map[string]any{{
+		"stripe_session_id": cs["id"], "stripe_payment_intent": cs["payment_intent"], "email": email, "customer_name": details["name"], "product": env.get("PRODUCT_NAME"),
+		"amount_total": cs["amount_total"], "currency": cs["currency"], "status": "paid", "is_probe": isProbe}}, "resolution=merge-duplicates,return=representation")
+	if err != nil || len(orders) == 0 {
+		return nil, fmt.Errorf("order insert failed: %v", err)
+	}
+	order := orders[0]
+	if env.get("FULFILLMENT_MODE") == "shipping" {
+		return s.commerceShip(env, cs, order, email, isProbe)
+	}
+	key := env.get("PRODUCT_FILE_KEY")
+	if isProbe && str(meta["backplane_probe_object"]) != "" {
+		key = str(meta["backplane_probe_object"])
+	}
+	ttl, _ := strconv.Atoi(env.get("DOWNLOAD_TTL_HOURS"))
+	if ttl == 0 {
+		ttl = 72
+	}
+	exp := time.Now().Add(time.Duration(ttl) * time.Hour).Unix()
+	if _, err := s.sbw(env, "POST", "downloads?on_conflict=stripe_session_id,object_key", []map[string]any{{"order_id": order["id"], "stripe_session_id": cs["id"], "object_key": key,
+		"expires_at": time.Unix(exp, 0).UTC().Format(time.RFC3339), "max_downloads": 10}}, "resolution=merge-duplicates,return=minimal"); err != nil {
+		return nil, err
+	}
+	claim, _ := json.Marshal(map[string]any{"s": cs["id"], "k": key, "e": exp})
+	body := b64u(claim)
+	m := hmac.New(sha256.New, []byte(env.get("DOWNLOAD_SIGNING_SECRET")))
+	m.Write([]byte(body))
+	link := env.baseURL + "/download?t=" + body + "." + b64u(m.Sum(nil))
+	emailID, emailErr := "", ""
+	sent, _ := s.sbw(env, "GET", "email_log?stripe_session_id=eq."+str(cs["id"])+"&kind=eq.purchase&select=resend_email_id", nil, "")
+	if len(sent) > 0 {
+		emailID = str(sent[0]["resend_email_id"])
+	} else {
+		payload := map[string]any{"from": env.get("FROM_EMAIL"), "to": []string{email}}
+		if tid := env.get("RESEND_TEMPLATE_PURCHASE"); tid != "" {
+			payload["template"] = map[string]any{"id": tid, "variables": map[string]any{"DOWNLOAD_URL": link}}
+		} else {
+			payload["subject"], payload["html"] = "Your "+env.get("PRODUCT_NAME")+" download", "<a href=\""+link+"\">Download</a>"
+		}
+		status, data := s.resendW(env, "POST", "/emails", payload)
+		if status >= 300 && env.get("RESEND_TEMPLATE_PURCHASE") != "" && status < 500 && status != 429 {
+			delete(payload, "template")
+			payload["subject"], payload["html"] = "Your "+env.get("PRODUCT_NAME")+" download", "<a href=\""+link+"\">Download</a>"
+			status, data = s.resendW(env, "POST", "/emails", payload)
+		}
+		if status >= 300 {
+			emailErr = fmt.Sprintf("Resend %d: %s", status, str(data["message"]))
+		} else {
+			emailID = str(data["id"])
+			_, _ = s.sbw(env, "POST", "email_log", []map[string]any{{"resend_email_id": emailID, "stripe_session_id": cs["id"], "recipient": email, "kind": "purchase"}}, "return=minimal")
+		}
+	}
+	if emailErr != "" && !isProbe {
+		return nil, fmt.Errorf("email failed: %s", emailErr)
+	}
+	return map[string]any{"order_id": order["id"], "download_url": link, "email_id": emailID, "email_error": emailErr}, nil
+}
+
+// commerceShip mirrors the generated Worker's physical-goods path: the
+// shipping address is stored with the order and a confirmation is emailed.
+func (s *Server) commerceShip(env *wenv, cs, order map[string]any, email string, isProbe bool) (map[string]any, error) {
+	var ship map[string]any
+	if ci, ok := cs["collected_information"].(map[string]any); ok {
+		ship, _ = ci["shipping_details"].(map[string]any)
+	}
+	if ship == nil {
+		ship, _ = cs["shipping_details"].(map[string]any)
+	}
+	details, _ := cs["customer_details"].(map[string]any)
+	patch := map[string]any{"fulfillment_status": "unfulfilled", "phone": details["phone"]}
+	if ship != nil {
+		patch["shipping_name"], patch["shipping_address"] = ship["name"], ship["address"]
+	}
+	if _, err := s.sbw(env, "PATCH", "orders?id=eq."+str(order["id"]), patch, "return=minimal"); err != nil {
+		return nil, err
+	}
+	emailID, emailErr := "", ""
+	sent, _ := s.sbw(env, "GET", "email_log?stripe_session_id=eq."+str(cs["id"])+"&kind=eq.purchase&select=resend_email_id", nil, "")
+	if len(sent) > 0 {
+		emailID = str(sent[0]["resend_email_id"])
+	} else {
+		status, data := s.resendW(env, "POST", "/emails", map[string]any{"from": env.get("FROM_EMAIL"), "to": []string{email},
+			"subject": "Order confirmed — " + env.get("PRODUCT_NAME"), "html": "<p>Your order is confirmed. We'll ship it soon.</p>"})
+		if status >= 300 {
+			emailErr = fmt.Sprintf("Resend %d: %s", status, str(data["message"]))
+		} else {
+			emailID = str(data["id"])
+			_, _ = s.sbw(env, "POST", "email_log", []map[string]any{{"resend_email_id": emailID, "stripe_session_id": cs["id"], "recipient": email, "kind": "purchase"}}, "return=minimal")
+		}
+	}
+	if emailErr != "" && !isProbe {
+		return nil, fmt.Errorf("email failed: %s", emailErr)
+	}
+	return map[string]any{"order_id": order["id"], "email_id": emailID, "email_error": emailErr}, nil
+}
+
+func (s *Server) commerceDownload(w http.ResponseWriter, r *http.Request, env *wenv) {
+	tok := r.URL.Query().Get("t")
+	parts := strings.SplitN(tok, ".", 2)
+	if len(parts) != 2 {
+		wjson(w, 400, map[string]any{"error": "invalid link"})
+		return
+	}
+	m := hmac.New(sha256.New, []byte(env.get("DOWNLOAD_SIGNING_SECRET")))
+	m.Write([]byte(parts[0]))
+	if !safeEq(parts[1], b64u(m.Sum(nil))) {
+		wjson(w, 403, map[string]any{"error": "invalid link"})
+		return
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		wjson(w, 400, map[string]any{"error": "invalid link"})
+		return
+	}
+	var claim struct {
+		S string `json:"s"`
+		K string `json:"k"`
+		E int64  `json:"e"`
+	}
+	_ = json.Unmarshal(raw, &claim)
+	if claim.E < time.Now().Unix() {
+		wjson(w, 410, map[string]any{"error": "This download link has expired."})
+		return
+	}
+	rows, err := s.sbw(env, "GET", "downloads?stripe_session_id=eq."+url.QueryEscape(claim.S)+"&object_key=eq."+url.QueryEscape(claim.K)+"&select=revoked,download_count,max_downloads,orders(status)", nil, "")
+	if err != nil || len(rows) == 0 || rows[0]["revoked"] == true {
+		wjson(w, 403, map[string]any{"error": "This download is no longer available."})
+		return
+	}
+	if o, ok := rows[0]["orders"].(map[string]any); !ok || o["status"] != "paid" {
+		wjson(w, 403, map[string]any{"error": "This download is no longer available."})
+		return
+	}
+	s.mu.Lock()
+	b := s.cf.buckets[env.r2["DOWNLOADS"]]
+	var obj []byte
+	if b != nil {
+		obj = b.Objects[claim.K]
+	}
+	s.mu.Unlock()
+	if obj == nil {
+		wjson(w, 404, map[string]any{"error": "File not found."})
+		return
+	}
+	go s.sbw(env, "POST", "rpc/bp_record_download", map[string]any{"p_session": claim.S, "p_key": claim.K}, "")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+claim.K[strings.LastIndex(claim.K, "/")+1:]+`"`)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(200)
+	w.Write(obj)
+}
+
+func (s *Server) commerceHealth(w http.ResponseWriter, r *http.Request, env *wenv) {
+	if env.get("BACKPLANE_PROBE_TOKEN") == "" || !safeEq(bearerTok(r), env.get("BACKPLANE_PROBE_TOKEN")) {
+		wjson(w, 401, map[string]any{"error": "unauthorized"})
+		return
+	}
+	var missing []string
+	for _, k := range commerceRequired {
+		if env.get(k) == "" {
+			missing = append(missing, k)
+		}
+	}
+	checks := map[string]any{}
+	timed := func(fn func() (string, error)) map[string]any {
+		t0 := time.Now()
+		d, err := fn()
+		if err != nil {
+			return map[string]any{"ok": false, "ms": time.Since(t0).Milliseconds(), "error": err.Error()}
+		}
+		return map[string]any{"ok": true, "ms": time.Since(t0).Milliseconds(), "detail": d}
+	}
+	shipping := env.get("FULFILLMENT_MODE") == "shipping"
+	if !shipping {
+		checks["r2"] = timed(func() (string, error) {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			bucket, bound := env.r2["DOWNLOADS"]
+			if !bound {
+				return "", fmt.Errorf("R2 binding DOWNLOADS is not bound")
+			}
+			b := s.cf.buckets[bucket]
+			if b == nil {
+				return "", fmt.Errorf("bucket %s does not exist", bucket)
+			}
+			if k := env.get("PRODUCT_FILE_KEY"); k != "" {
+				if _, ok := b.Objects[k]; !ok {
+					return "bucket reachable; product file " + k + " NOT uploaded yet", nil
+				}
+				return "bucket reachable; product file present", nil
+			}
+			return "bucket reachable", nil
+		})
+	}
+	if r2, ok := checks["r2"].(map[string]any); ok && strings.Contains(fmt.Sprint(r2["detail"]), "NOT uploaded") {
+		r2["warn"] = true
+	}
+	checks["kv"] = timed(func() (string, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		id, bound := env.kv["PROBES"]
+		if !bound {
+			return "", fmt.Errorf("KV binding PROBES is not bound")
+		}
+		if s.cf.kv[id] == nil {
+			return "", fmt.Errorf("namespace %s does not exist", id)
+		}
+		return "namespace reachable", nil
+	})
+	checks["supabase"] = timed(func() (string, error) {
+		_, err := s.sbw(env, "GET", "orders?select=id&limit=1", nil, "")
+		if err != nil {
+			return "", err
+		}
+		return "orders table reachable with the server key", nil
+	})
+	checks["stripe"] = timed(func() (string, error) {
+		price, err := s.stripeW(env, "GET", "/v1/prices/"+env.get("PRICE_ID"), nil)
+		if err != nil {
+			return "", err
+		}
+		if price["active"] != true {
+			return "", fmt.Errorf("price %s is inactive", env.get("PRICE_ID"))
+		}
+		return "price active", nil
+	})
+	checks["resend"] = timed(func() (string, error) {
+		s.mu.Lock()
+		kind := s.resendKeyKindLocked(env.get("RESEND_API_KEY"))
+		s.mu.Unlock()
+		switch kind {
+		case "sending":
+			return "send-only key valid", nil
+		case "full":
+			return "key valid (full access — a send-only key is safer)", nil
+		}
+		return "", fmt.Errorf("key rejected (401 invalid_api_key)")
+	})
+	ok := len(missing) == 0
+	for _, c := range checks {
+		if c.(map[string]any)["ok"] != true {
+			ok = false
+		}
+	}
+	w.Header().Set("X-Backplane-Worker", env.get("WORKER_NAME"))
+	wjson(w, 200, map[string]any{"ok": ok, "worker": env.get("WORKER_NAME"), "version": env.get("CODE_VERSION"), "checks": checks, "missing": orStrings(missing), "time": time.Now().UTC().Format(time.RFC3339)})
+}
+
+func orStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// ---- data Worker ----
+
+func (s *Server) dataWorker(w http.ResponseWriter, r *http.Request, env *wenv, path string) {
+	switch {
+	case path == "/":
+		wjson(w, 200, map[string]any{"service": env.get("WORKER_NAME"), "ok": true})
+	case path == "/__backplane/health":
+		if env.get("BACKPLANE_PROBE_TOKEN") == "" || !safeEq(bearerTok(r), env.get("BACKPLANE_PROBE_TOKEN")) {
+			wjson(w, 401, map[string]any{"error": "unauthorized"})
+			return
+		}
+		checks := map[string]any{}
+		t0 := time.Now()
+		if _, err := s.sbw(env, "GET", "backplane_probe?select=id&limit=1", nil, ""); err != nil {
+			checks["supabase"] = map[string]any{"ok": false, "error": err.Error(), "ms": time.Since(t0).Milliseconds()}
+		} else {
+			checks["supabase"] = map[string]any{"ok": true, "detail": "database reachable with the server key", "ms": time.Since(t0).Milliseconds()}
+		}
+		s.mu.Lock()
+		_, kvOK := s.cf.kv[env.kv["PROBES"]]
+		kind := s.resendKeyKindLocked(env.get("RESEND_API_KEY"))
+		stripeOK := s.stripeKeyValidLocked(env.get("STRIPE_SECRET_KEY"))
+		s.mu.Unlock()
+		checks["kv"] = map[string]any{"ok": kvOK, "detail": "namespace reachable"}
+		if env.get("RESEND_API_KEY") != "" {
+			checks["resend"] = map[string]any{"ok": kind != "invalid", "detail": "send-only key valid", "error": map[bool]string{true: "", false: "key rejected"}[kind != "invalid"]}
+		}
+		if env.get("STRIPE_SECRET_KEY") != "" {
+			checks["stripe"] = map[string]any{"ok": stripeOK, "detail": "price active"}
+		}
+		ok := true
+		for _, c := range checks {
+			if c.(map[string]any)["ok"] != true {
+				ok = false
+			}
+		}
+		wjson(w, 200, map[string]any{"ok": ok, "worker": env.get("WORKER_NAME"), "checks": checks, "missing": []string{}})
+	case strings.HasPrefix(path, "/__backplane/probe/stripe/"):
+		s.commerceWorker(w, r, env, path)
+	case path == "/billing/checkout":
+		tok := bearerTok(r)
+		if tok == "" {
+			wjson(w, 401, map[string]any{"error": "sign in first"})
+			return
+		}
+		wjson(w, 501, map[string]any{"error": "simulated"})
+	case path == "/stripe/webhook":
+		payload, _ := io.ReadAll(r.Body)
+		if !verifyStripeSig(payload, r.Header.Get("Stripe-Signature"), env.get("STRIPE_WEBHOOK_SECRET")) {
+			wjson(w, 400, map[string]any{"error": "invalid signature"})
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(payload))
+		var ev map[string]any
+		_ = json.Unmarshal(payload, &ev)
+		if str(ev["type"]) == "checkout.session.expired" {
+			r2 := r.Clone(r.Context())
+			r2.Body = io.NopCloser(bytes.NewReader(payload))
+			s.commerceWebhook(w, r2, env)
+			return
+		}
+		wjson(w, 200, map[string]any{"received": true})
+	default:
+		wjson(w, 404, map[string]any{"error": "not found"})
+	}
+}
