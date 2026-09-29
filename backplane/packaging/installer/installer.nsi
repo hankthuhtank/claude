@@ -1,7 +1,7 @@
 ; Backplane setup — installs for the current Windows account only, so no
 ; administrator password is needed. Built by packaging/build-windows.sh:
 ;
-;   makensis -DVERSION=1.0.0 -DSTAGE=<stage dir> -DOUTFILE=<exe> installer.nsi
+;   makensis -DVERSION=1.1.0 -DSTAGE=<stage dir> -DOUTFILE=<exe> installer.nsi
 ;
 ; STAGE holds Backplane.exe, Backplane.ico, Backplane.png, welcome.bmp and
 ; header.bmp. The uninstaller written here removes the program, its
@@ -14,7 +14,7 @@ RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
 !ifndef VERSION
-  !define VERSION "1.0.0"
+  !define VERSION "1.1.0"
 !endif
 !ifndef STAGE
   !error "Pass -DSTAGE=<folder with the staged files>"

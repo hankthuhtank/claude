@@ -8,12 +8,13 @@ import { HealthTab, HistoryTab } from "./health.jsx";
 import { PlanView, RunView } from "./plan.jsx";
 import { refreshBoot } from "../boot.js";
 import { Question } from "./newbackend.jsx";
+import { ProductsTab } from "../products.jsx";
 
 export function Project({ id, env: env0, tab: tab0, autoplan, runId, plan: plan0 }) {
   const boot = useStore((s) => s.boot);
   const summary = boot?.projects?.find((p) => p.id === id);
   const [env, setEnv] = useState(env0 || summary?.activeEnv || "production");
-  const [tab, setTab] = useState(tab0 || "rack");
+  const [tab, setTab] = useState(tab0 || "overview");
   const { data: dash, error, reload } = useCall("Dashboard", { projectId: id, env }, []);
   const [plan, setPlan] = useState(plan0 || null);
   const [activeRun, setActiveRun] = useState(null);
@@ -61,10 +62,12 @@ export function Project({ id, env: env0, tab: tab0, autoplan, runId, plan: plan0
   };
 
   if (error && !dash) return <div class="page"><ErrorNote error={error} /><Btn onClick={() => go("home")}>Back</Btn></div>;
-  if (!dash) return <div class="page"><div class="boot" style="height:40vh"><span class="boot-led" />Reading the rack…</div></div>;
+  if (!dash) return <div class="page"><div class="boot" style="height:40vh"><span class="boot-led" />Loading…</div></div>;
   const p = dash.project;
   const envState = p.environments.find((e) => e.name === env) || {};
   const building = !!(activeRun && (activeRun.status === "running" || activeRun.status === "rolling_back"));
+  const sells = !!dash.template?.questions?.some((q) => q.kind === "products");
+  const onTodo = (t) => (t.action === "upload" ? setTab("settings") : t.action === "plan" ? makePlan() : null);
   return (
     <div class="page">
       <div class="page-head">
@@ -85,7 +88,7 @@ export function Project({ id, env: env0, tab: tab0, autoplan, runId, plan: plan0
           {p.environments.length > 1 ? <Seg label="Environment" value={env} onChange={(e) => { setEnv(e); setPlan(null); setActiveRun(null); }} options={p.environments.map((e) => [e.name, e.name])} /> : <EnvStamp env={env} practice={p.practice} />}
           <div class="row">
             {!p.imported ? <Btn icon="bolt" busy={planBusy} disabled={building} onClick={() => makePlan()}>Plan build</Btn> : null}
-            <Btn kind="primary" icon="shield" disabled={building || !envState.built} onClick={() => setTab("health")}>Certify</Btn>
+            <Btn kind="primary" icon="shield" disabled={building || !envState.built} onClick={() => setTab("health")}>Full check</Btn>
           </div>
         </div>
       </div>
@@ -98,16 +101,18 @@ export function Project({ id, env: env0, tab: tab0, autoplan, runId, plan: plan0
       ) : null}
 
       <Tabs value={tab} onChange={setTab} tabs={[
-        ["rack", "Rack"],
+        ["overview", "Overview", dash.todos?.length ? <Badge>{dash.todos.length} to do</Badge> : null],
         ["health", "Health", dash.report ? <Led h={dash.report.overall} /> : null],
         ["history", "History"],
+        ...(sells ? [["products", "Products"]] : []),
         ["build", "Build", building ? <Led busy /> : plan ? <Badge>plan ready</Badge> : null],
         ["code", "Code"],
         ["settings", "Settings"],
-      ]} />
+      ].filter(Boolean)} />
 
-      {tab === "rack" ? (
+      {tab === "overview" ? (
         <div class="stack">
+          {dash.todos?.length ? <Todos todos={dash.todos} onAct={onTodo} busy={planBusy} /> : null}
           <RackView dash={dash} />
           <div class="card">
             <div class="card-head"><h3>Inventory</h3><span class="small muted">{dash.resources.length} resources · {dash.secrets} secrets in the vault for {env}</span></div>
@@ -118,12 +123,30 @@ export function Project({ id, env: env0, tab: tab0, autoplan, runId, plan: plan0
       ) : null}
       {tab === "health" ? <HealthTab dash={dash} project={p} env={env} onFix={onFix} busyFix={fixBusy} reload={() => reload(true)} /> : null}
       {tab === "history" ? <HistoryTab dash={dash} project={p} env={env} /> : null}
+      {tab === "products" ? <ProductsTab project={p} env={env} dash={dash} onPlan={(pl) => { setPlan(pl); setActiveRun(null); setTab("build"); }} /> : null}
       {tab === "build" ? (
         <BuildTab dash={dash} project={p} env={env} plan={plan} setPlan={setPlan} activeRun={activeRun} setActiveRun={setActiveRun}
           makePlan={makePlan} planBusy={planBusy} onCertify={() => { setTab("health"); call("Check", { projectId: id, env, kind: "full" }).catch((e) => toast("warn", "Could not start the check", e.message)); }} reload={reload} />
       ) : null}
       {tab === "code" ? <CodeTab project={p} env={env} /> : null}
       {tab === "settings" ? <SettingsTab dash={dash} project={p} env={env} reload={reload} onPlan={(pl) => { setPlan(pl); setTab("build"); }} /> : null}
+    </div>
+  );
+}
+
+/** Things left for later on purpose. They're not health problems. */
+function Todos({ todos, onAct, busy }) {
+  return (
+    <div class="card todos">
+      <div class="card-head"><h3>To do</h3><span class="small muted">Left for later on purpose — not counted against health</span></div>
+      {todos.map((t) => (
+        <div class="oprow">
+          <Icon name={t.action === "upload" ? "upload" : t.action === "plan" ? "bolt" : "check"} size={14} />
+          <div><div><b>{t.title}</b></div><div class="note">{t.detail}</div></div>
+          {t.action === "upload" ? <Btn size="sm" icon="upload" onClick={() => onAct(t)}>Upload file</Btn>
+            : t.action === "plan" ? <Btn size="sm" kind="primary" icon="bolt" busy={busy} onClick={() => onAct(t)}>Plan build</Btn> : <span />}
+        </div>
+      ))}
     </div>
   );
 }
@@ -161,7 +184,7 @@ function BuildTab({ dash, project, env, plan, setPlan, activeRun, setActiveRun, 
       {!plan && !activeRun ? (
         <Empty icon="bolt" title="Plan before you build"
           action={<Btn kind="primary" size="lg" icon="bolt" busy={planBusy} onClick={() => makePlan()}>Plan the build</Btn>}>
-          Backplane reads what already exists, then writes a work order listing every resource it would create or change, why, and what it costs. You approve it; then it builds, step by step, with checkpoints.
+          Backplane reads what already exists, then writes a plan listing every resource it would create or change, why, and what it costs. You approve it; then it builds, step by step, with checkpoints.
         </Empty>
       ) : null}
       <div class="grid-2" style="align-items:start">
@@ -351,12 +374,12 @@ function SettingsTab({ dash, project, env, reload, onPlan }) {
               <select class="select" style="width:auto" value={mon.quickEveryMin} onChange={(e) => setMon({ ...mon, quickEveryMin: Number(e.currentTarget.value) })}>
                 {[5, 15, 30, 60, 180, 720].map((m) => <option value={m}>{m < 60 ? `${m} minutes` : `${m / 60} hour${m === 60 ? "" : "s"}`}</option>)}
               </select>
-              <span>· full certification every</span>
+              <span>· full check every</span>
               <select class="select" style="width:auto" value={mon.fullEveryHours} onChange={(e) => setMon({ ...mon, fullEveryHours: Number(e.currentTarget.value) })}>
                 {[0, 6, 12, 24, 72, 168].map((h) => <option value={h}>{h === 0 ? "never" : h < 24 ? `${h} hours` : `${h / 24} day${h === 24 ? "" : "s"}`}</option>)}
               </select>
             </div>
-            <Toggle id="mon-after" checked={mon.checkAfterBuild} onChange={(v) => setMon({ ...mon, checkAfterBuild: v })} label="Certify after every build" />
+            <Toggle id="mon-after" checked={mon.checkAfterBuild} onChange={(v) => setMon({ ...mon, checkAfterBuild: v })} label="Run a full check after every build" />
             <Toggle id="mon-notify" checked={mon.notify} onChange={(v) => setMon({ ...mon, notify: v })} label="Desktop notification when health changes" />
           </div>
           <div class="row" style="justify-content:flex-end"><Btn kind="primary" busy={busy} onClick={saveGeneral}>Save</Btn></div>
@@ -428,7 +451,7 @@ function AnswersCard({ template, dash, project, reload }) {
   const [answers, setAnswers] = useState(() => ({ ...(dash.answers || {}) }));
   const [adv, setAdv] = useState(false);
   const [busy, run] = useAction();
-  const qs = template.questions.filter((q) => q.kind !== "file" && (!q.advanced || adv));
+  const qs = template.questions.filter((q) => q.kind !== "file" && q.kind !== "products" && (!q.advanced || adv));
   const save = async () => {
     const r = await run(() => call("UpdateProject", { id: project.id, answers }));
     if (r.keptUserFiles?.length) toast("warn", "Your edited files were kept", r.keptUserFiles.join(", "), 10000);

@@ -72,7 +72,7 @@ func (a *App) StartPractice(ctx context.Context) (*PracticeStateResult, error) {
 		s = sim.New()
 		if err := s.Start(); err != nil {
 			a.mu.Unlock()
-			return nil, fmt.Errorf("could not start the practice sandbox: %w", err)
+			return nil, fmt.Errorf("could not start practice mode: %w", err)
 		}
 		a.simServer = s
 		a.Engine.PracticeBaseURLs = s.BaseURLs()
@@ -129,7 +129,7 @@ func (a *App) StartPractice(ctx context.Context) (*PracticeStateResult, error) {
 			return nil, err
 		}
 	}
-	a.log("info", "", "", "Practice sandbox started — simulated Cloudflare, Supabase, Stripe, Resend and GitHub on this computer only.")
+	a.log("info", "", "", "Practice mode started — simulated Cloudflare, Supabase, Stripe, Resend and GitHub on this computer only.")
 	a.Engine.Bus.Publish(engine.Event{Type: "practice", Data: map[string]any{"running": true}})
 	return a.PracticeState(ctx)
 }
@@ -147,13 +147,13 @@ func (a *App) StopPractice(ctx context.Context) (bool, error) {
 	a.Engine.PracticeBaseURLs = nil
 	a.resetPractice()
 	a.markPracticeOffline()
-	a.log("info", "", "", "Practice sandbox stopped — practice backends were reset and practice connections switched off.")
+	a.log("info", "", "", "Practice mode stopped — practice backends were reset and practice connections switched off.")
 	a.Engine.Bus.Publish(engine.Event{Type: "practice", Data: map[string]any{"running": false}})
 	return true, nil
 }
 
 // practiceOffNote is shown on practice connections while the sandbox is off.
-const practiceOffNote = "Sandbox off — start practice mode to use it."
+const practiceOffNote = "Off — start practice mode to use it."
 
 // markPracticeOffline switches practice connections to "off" so nothing shows
 // them as connected while the simulator isn't running (and the saved file
@@ -184,7 +184,7 @@ func (a *App) PracticeState(ctx context.Context) (*PracticeStateResult, error) {
 	running := a.simServer != nil
 	a.mu.Unlock()
 	res := &PracticeStateResult{Running: running, Breaks: breakCatalog,
-		Note: "Practice projects use a simulator on this computer. Nothing is created in real accounts and nothing costs money. The sandbox resets when Backplane closes."}
+		Note: "Practice projects use a simulator on this computer. Nothing is created in real accounts and nothing costs money. Everything resets when you stop practice mode or close Backplane."}
 	views, _ := a.ListConnections(ctx)
 	for _, v := range views {
 		if v.Practice {
@@ -266,7 +266,7 @@ func (a *App) PracticeBreak(ctx context.Context, p BreakParams) (*BreakResult, e
 	s := a.simServer
 	a.mu.Unlock()
 	if s == nil {
-		return nil, fmt.Errorf("start the practice sandbox first")
+		return nil, fmt.Errorf("start practice mode first")
 	}
 	pr, err := a.project(p.ProjectID)
 	if err != nil {

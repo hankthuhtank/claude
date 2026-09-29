@@ -318,6 +318,34 @@ func (s *Store) SaveManifest(m *core.Manifest) error {
 	return WriteJSON(filepath.Join(d, "manifest.json"), m)
 }
 
+// UpdateManifest applies fn to the latest saved manifest and writes it back
+// under the store lock, so a long-running reader (a health check) can record
+// a field without overwriting what a build saved in the meantime.
+func (s *Store) UpdateManifest(id, env string, fn func(*core.Manifest)) (*core.Manifest, error) {
+	d, err := s.envDir(id, env)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := core.NewManifest(id, env)
+	if err := ReadJSON(filepath.Join(d, "manifest.json"), m); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if m.Resources == nil {
+		m.Resources = map[string]*core.ResourceState{}
+	}
+	if m.Providers == nil {
+		m.Providers = map[string]core.ProviderLink{}
+	}
+	if m.Generated == nil {
+		m.Generated = map[string]core.GeneratedFile{}
+	}
+	fn(m)
+	m.UpdatedAt = time.Now().UTC()
+	return m, WriteJSON(filepath.Join(d, "manifest.json"), m)
+}
+
 // ResetEnv forgets everything recorded for one environment (manifest, runs,
 // reports, history, snapshots). Used for practice projects, whose simulated
 // resources disappear when the simulator stops.

@@ -307,6 +307,17 @@ func finishDesign(d *Design) {
 	for _, q := range t.Questions {
 		keys[q.Key] = q
 	}
+	// A price (and product name) heard in the description becomes the first
+	// row of the preset's products list. The name is never made up: if the
+	// owner didn't say it, the row waits for them to name it.
+	if spec := t.ProductsSpec(); spec != nil {
+		if _, have := d.Answers["products"]; !have {
+			if price, ok := d.Answers["price"].(float64); ok {
+				name, _ := d.Answers["product_name"].(string)
+				d.Answers["products"] = []any{map[string]any{"name": strings.TrimSpace(name), "price": price, "billing": spec.Billing[0]}}
+			}
+		}
+	}
 	for k, v := range d.Answers {
 		q, ok := keys[k]
 		if !ok {
@@ -322,9 +333,9 @@ func finishDesign(d *Design) {
 			d.Questions = append(d.Questions, "Which domain should emails come from (for example example.com)?")
 		}
 	}
-	if _, ok := keys["price"]; ok {
-		if _, have := d.Answers["price"]; !have {
-			d.Questions = append(d.Questions, "What price should customers pay?")
+	if spec := t.ProductsSpec(); spec != nil {
+		if _, have := d.Answers["products"]; !have {
+			d.Questions = append(d.Questions, "What do you sell, and at what price? (Add each "+spec.Noun+" to the list.)")
 		}
 	}
 	valid := d.AddOns[:0]

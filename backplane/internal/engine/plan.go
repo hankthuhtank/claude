@@ -179,6 +179,7 @@ func (e *Engine) Plan(ctx context.Context, p *core.Project, env string, opts Pla
 				op.Action = core.ActUpdate
 			case herr != nil || depChanging:
 				op.Action = core.ActUpdate
+				op.Recheck = herr == nil && hash == st.Hash
 				op.Why = "Something it depends on is changing; it will be re-checked and updated only if needed."
 			case hash != st.Hash:
 				op.Action = core.ActUpdate
@@ -375,6 +376,9 @@ func summarize(bp *core.Blueprint, plan *core.Plan) []core.PlanGroup {
 	order := []key{}
 	for _, op := range plan.Operations {
 		label := strings.ToUpper(op.Action)
+		if op.Recheck {
+			label = "RE-CHECK"
+		}
 		switch op.Action {
 		case core.ActReplace, core.ActAdopt:
 			label = "CREATE"
@@ -398,7 +402,7 @@ func summarize(bp *core.Blueprint, plan *core.Plan) []core.PlanGroup {
 			counts[k][nounFor(op.Kind)]++
 		}
 	}
-	actionRank := map[string]int{"CREATE": 0, "USE EXISTING": 1, "UPDATE": 2, "DELETE": 3, "DETACH": 4, "KEEP": 5}
+	actionRank := map[string]int{"CREATE": 0, "USE EXISTING": 1, "UPDATE": 2, "DELETE": 3, "DETACH": 4, "RE-CHECK": 5, "KEEP": 6}
 	sort.SliceStable(order, func(i, j int) bool {
 		if actionRank[order[i].action] != actionRank[order[j].action] {
 			return actionRank[order[i].action] < actionRank[order[j].action]

@@ -19,7 +19,7 @@
       "0409": {
         "identity": {
           "name": "SafiSolutions.Backplane",
-          "version": "1.0.0.0"
+          "version": "1.1.0.0"
         },
         "description": "Backplane",
         "minimum-os": "win10",
@@ -43,22 +43,22 @@
     "#1": {
       "0000": {
         "fixed": {
-          "file_version": "1.0.0.0",
-          "product_version": "1.0.0.0"
+          "file_version": "1.1.0.0",
+          "product_version": "1.1.0.0"
         },
         "info": {
           "0409": {
             "Comments": "Set up and monitor your business backend from one place.",
             "CompanyName": "Safi Solutions",
             "FileDescription": "Backplane",
-            "FileVersion": "1.0.0",
+            "FileVersion": "1.1.0",
             "InternalName": "Backplane",
             "LegalCopyright": "© 2026 Safi Solutions",
             "LegalTrademarks": "",
             "OriginalFilename": "Backplane.exe",
             "PrivateBuild": "",
             "ProductName": "Backplane",
-            "ProductVersion": "1.0.0",
+            "ProductVersion": "1.1.0",
             "SpecialBuild": ""
           }
         }

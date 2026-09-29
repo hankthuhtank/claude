@@ -8,8 +8,8 @@ import { Home } from "./screens/home.jsx";
 import { NewBackend } from "./screens/newbackend.jsx";
 import { Accounts } from "./screens/accounts.jsx";
 import { Project } from "./screens/project.jsx";
-import { Register } from "./screens/register.jsx";
-import { Bench } from "./screens/bench.jsx";
+import { Activity } from "./screens/register.jsx";
+import { Practice } from "./screens/bench.jsx";
 import { Binder } from "./screens/binder.jsx";
 import { Settings } from "./screens/settings.jsx";
 import { applySettings, refreshBoot } from "./boot.js";
@@ -18,8 +18,8 @@ const NAV = [
   ["home", "Backends", "rack"],
   ["new", "New", "plus"],
   ["accounts", "Accounts", "plug"],
-  ["register", "Register", "tape"],
-  ["bench", "Bench", "flask"],
+  ["activity", "Activity", "tape"],
+  ["practice", "Practice", "flask"],
   ["binder", "Guides", "binder"],
 ];
 
@@ -48,7 +48,7 @@ function Rail() {
           <span>{label}</span>
           {id === "home" && boot?.projects?.length ? <Led h={w} /> : null}
           {id === "accounts" && conns.length ? <Led h={connWorst} /> : null}
-          {id === "bench" && practice ? <Led busy title="Practice sandbox running" /> : null}
+          {id === "practice" && practice ? <Led busy title="Practice mode is on" /> : null}
         </button>
       ))}
       <div class="rail-spacer" />
@@ -66,8 +66,8 @@ function Screen() {
     case "new": return <NewBackend {...p} />;
     case "accounts": return <Accounts {...p} />;
     case "project": return <Project key={p.id} {...p} />;
-    case "register": return <Register {...p} />;
-    case "bench": return <Bench {...p} />;
+    case "activity": return <Activity {...p} />;
+    case "practice": return <Practice {...p} />;
     case "binder": return <Binder {...p} />;
     case "settings": return <Settings {...p} />;
     default: return <Home />;
@@ -77,14 +77,14 @@ function Screen() {
 function PracticeBanner() {
   const practice = useStore((s) => s.practice);
   const route = useStore((s) => s.route);
-  if (!practice || route.name === "bench") return null;
+  if (!practice || route.name === "practice") return null;
   return (
     <div class="practice-banner" role="status">
       <Led busy />
-      <b>Practice sandbox on</b>
+      <b>Practice mode on</b>
       <span class="ink2">Simulated services on this computer — nothing reaches real accounts. Resets when Backplane closes.</span>
       <span style="flex:1" />
-      <Btn size="sm" kind="ghost" onClick={() => go("bench")}>Open the bench</Btn>
+      <Btn size="sm" kind="ghost" onClick={() => go("practice")}>Open Practice</Btn>
     </div>
   );
 }

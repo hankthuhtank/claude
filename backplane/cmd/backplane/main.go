@@ -27,7 +27,7 @@ import (
 )
 
 // version is set at build time (-ldflags "-X main.version=…").
-var version = "1.0.0"
+var version = "1.1.0"
 
 type instance struct {
 	Port  string `json:"port"`

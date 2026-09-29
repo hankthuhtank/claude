@@ -1,0 +1,95 @@
+# Backplane: test on every change, and build the Windows installer in the
+# cloud so nothing needs installing on your own PC. The installer zip is
+# attached to each run under "Artifacts".
+name: Backplane
+
+on:
+  push:
+    paths: ["backplane/**", ".github/workflows/backplane.yml"]
+  pull_request:
+    paths: ["backplane/**", ".github/workflows/backplane.yml"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp on the installer (blank = the version in the code)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backplane-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: backplane
+
+jobs:
+  test:
+    name: Vet and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backplane/go.mod
+          cache-dependency-path: backplane/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backplane/ui/package-lock.json
+      - name: UI bundle is up to date
+        run: |
+          cd ui && npm ci --no-audit --no-fund && npm run build
+          cd .. && git diff --exit-code -- internal/uiassets/dist \
+            || { echo "::error::internal/uiassets/dist is out of date: run 'cd backplane/ui && npm run build' and commit it"; exit 1; }
+      - name: Format
+        run: test -z "$(gofmt -l cmd internal packaging)" || { gofmt -l cmd internal packaging; exit 1; }
+      - name: Vet (Linux and Windows)
+        run: go vet ./... && GOOS=windows go vet ./...
+      - name: Generated Worker code (the JavaScript that ships)
+        run: node --test internal/blueprints/testdata/workers.test.mjs
+      - name: Test
+        run: go test -timeout 20m ./...
+
+  windows:
+    name: Windows installer
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backplane/go.mod
+          cache-dependency-path: backplane/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backplane/ui/package-lock.json
+      - name: Packaging tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq nsis zip
+          go install github.com/tc-hib/go-winres@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Version
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          v="$INPUT_VERSION"
+          [ -n "$v" ] || v="$(sed -n 's/^var version = "\(.*\)"/\1/p' cmd/backplane/main.go)"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: SKIP_TESTS=1 packaging/build-windows.sh "${{ steps.v.outputs.version }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Backplane-${{ steps.v.outputs.version }}-Windows
+          # The folder users unzip; GitHub zips it for download.
+          path: backplane/dist/Backplane-${{ steps.v.outputs.version }}-Windows/
+          if-no-files-found: error
+          retention-days: 30

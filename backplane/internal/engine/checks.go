@@ -201,9 +201,15 @@ func checkCheckout(c *Checker, l *core.LinkSpec) core.CheckResult {
 		return res
 	}
 	token, _ := c.Gen("probe_token")
+	items := Catalog(&c.P.Blueprint)
 	// Customers can only name an item and a quantity. Unknown items are
 	// refused, and a price or amount sent from the browser is ignored.
-	_, uerr := c.workerCall("POST", "/checkout", []byte(`{"items":[{"key":"bp_no_such_item","quantity":1}]}`), http.Header{"Accept": {"application/json"}, "Content-Type": {"application/json"}}, true)
+	// (Backends built before products & prices sell one fixed price and
+	// ignore the request body, so only catalog builds are tested for this.)
+	var uerr error = fmt.Errorf("skipped")
+	if len(items) > 0 {
+		_, uerr = c.workerCall("POST", "/checkout", []byte(`{"items":[{"key":"bp_no_such_item","quantity":1}]}`), http.Header{"Accept": {"application/json"}, "Content-Type": {"application/json"}}, true)
+	}
 	if uerr == nil {
 		return core.CheckResult{Health: core.HealthFail, Summary: "Checkout accepted an item that isn't for sale.",
 			Problem: &core.Problem{Title: "CHECKOUT ACCEPTS UNKNOWN ITEMS", Code: "drift", Summary: "The Worker's /checkout created a session for an item that isn't in the catalog. The deployed code is not the version Backplane generated; rebuild the Worker.",
@@ -211,7 +217,7 @@ func checkCheckout(c *Checker, l *core.LinkSpec) core.CheckResult {
 	}
 	body := []byte(`{}`)
 	var expect int64
-	if items := Catalog(&c.P.Blueprint); len(items) > 0 {
+	if len(items) > 0 {
 		body, _ = json.Marshal(map[string]any{"items": []any{map[string]any{"key": items[0].Key, "quantity": 1, "price": "price_from_browser", "amount": 1, "unit_amount": 1}}, "amount": 1})
 		expect = items[0].Cents()
 	}

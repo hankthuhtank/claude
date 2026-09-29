@@ -515,3 +515,24 @@ textarea.code { width: 100%; min-height: 60vh; background: var(--well); border: 
   .binder-tabs { grid-auto-flow: column; overflow-x: auto; }
   .wo-group { grid-template-columns: 1fr; }
 }
+
+/* ---------- products & prices: a designation strip ---------- */
+.pricelist { display: grid; gap: 6px; }
+.pl-head, .pl-row { display: grid; grid-template-columns: var(--pl-cols); gap: 8px; align-items: start; }
+.pl-head { padding: 0 0 2px; border-bottom: 1px solid var(--line-2); }
+.pl-row { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.pl-no { display: flex; align-items: center; gap: 6px; height: 38px; font-size: .8rem; letter-spacing: .12em; color: var(--muted); }
+.pl-cell { display: grid; gap: 3px; min-width: 0; }
+.pl-money { display: flex; align-items: center; gap: 6px; }
+.pl-money > span:first-child { font-family: var(--display); font-weight: 600; color: var(--ink-2); min-width: 1ch; }
+.pl-money .input { min-width: 0; }
+.pl-err { color: var(--ink); font-size: .8rem; border-left: 3px solid var(--fail); padding-left: 6px; }
+@media (max-width: 720px) {
+  .pl-head { display: none; }
+  .pl-row { grid-template-columns: 44px 1fr 36px; }
+  .pl-row > .pl-cell:not(:first-of-type) { grid-column: 2; }
+  .pl-cell[data-label]::before { content: attr(data-label); font-family: var(--display); font-weight: 600; font-size: .68rem; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+}
+.passed-toggle { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
+.passed-toggle svg { color: var(--ok); }
+.act.re-check { color: var(--muted); }

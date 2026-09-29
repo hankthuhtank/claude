@@ -14,7 +14,7 @@
 
 const STRIPE_VERSION = "2026-08-26.dahlia";
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
-const REQUIRED = ["SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "CATALOG",
+const REQUIRED = ["SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
   "RESEND_API_KEY", "FROM_EMAIL", "DOWNLOAD_SIGNING_SECRET", "BACKPLANE_PROBE_TOKEN", "PRODUCT_NAME"];
 // The Worker checks this many prices itself; Backplane checks every price directly.
 const HEALTH_PRICE_LIMIT = 8;
@@ -749,10 +749,13 @@ async function health(request, env, url) {
   if (!bearerOK(request, env)) return json({ error: "unauthorized" }, 401);
   const full = url.searchParams.get("mode") === "full";
   const missing = REQUIRED.filter((k) => !env[k]);
-  if (!env.DOWNLOADS) missing.push("DOWNLOADS (R2 binding)");
+  if (!env.CATALOG && !env.PRICE_ID) missing.push("CATALOG");
+  // Physical goods ship; only download stores have a file bucket.
+  const downloads = env.FULFILLMENT_MODE !== "shipping";
+  if (downloads && !env.DOWNLOADS) missing.push("DOWNLOADS (R2 binding)");
   if (!env.PROBES) missing.push("PROBES (KV binding)");
   const checks = {};
-  checks.r2 = await timed(async () => {
+  if (downloads) checks.r2 = await timed(async () => {
     if (!env.DOWNLOADS) throw new Error("R2 binding DOWNLOADS is not bound");
     if (full) {
       const k = `__backplane/health-${crypto.randomUUID()}`;
@@ -765,7 +768,7 @@ async function health(request, env, url) {
     if (env.PRODUCT_FILE_KEY && !product) return `bucket reachable; product file ${env.PRODUCT_FILE_KEY} NOT uploaded yet`;
     return product ? `bucket reachable; product file present (${Math.round(product.size / 1024)} KB)` : "bucket reachable";
   });
-  if (checks.r2.ok && /NOT uploaded/.test(checks.r2.detail)) checks.r2 = { ...checks.r2, warn: true };
+  if (checks.r2?.ok && /NOT uploaded/.test(checks.r2.detail)) checks.r2 = { ...checks.r2, warn: true };
   checks.kv = await timed(async () => {
     if (!env.PROBES) throw new Error("KV binding PROBES is not bound");
     if (full) {

@@ -227,11 +227,12 @@ func (e *Engine) Check(ctx context.Context, p *core.Project, env string, opts Ch
 	note := historyNote(e, p, env, rep)
 	if opts.Kind == core.CheckFull && built {
 		t := rep.FinishedAt
-		man.LastFullCheck = &t
-		// Record provider link health for the dashboard.
-		_ = e.Store.SaveManifest(man)
-		if rep.Overall == core.HealthOK {
-			_, _ = e.Snapshot(p, env, man, "Known good — full certification passed", true)
+		checked := man.UpdatedAt
+		// Only the check time is written, onto the latest manifest: a build
+		// may have finished while this check ran, and its state must win.
+		fresh, err := e.Store.UpdateManifest(p.ID, env, func(m *core.Manifest) { m.LastFullCheck = &t })
+		if err == nil && rep.Overall == core.HealthOK && !changedSince(fresh, checked) {
+			_, _ = e.Snapshot(p, env, fresh, "Known good — full check passed", true)
 		}
 	}
 	if err := e.Store.SaveReport(rep, note); err != nil {
@@ -242,6 +243,17 @@ func (e *Engine) Check(ctx context.Context, p *core.Project, env string, opts Ch
 	c.Log(level, "", "Health check finished: "+rep.Headline)
 	e.Bus.Publish(Event{Type: "report", Project: p.ID, Env: env, RunID: rep.ID, Data: rep})
 	return rep, nil
+}
+
+// changedSince reports whether a build changed resources after a check read
+// the manifest (then the "known good" snapshot would describe something else).
+func changedSince(m *core.Manifest, read time.Time) bool {
+	for _, st := range m.Resources {
+		if st.UpdatedAt.After(read) {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckRunning reports whether a check is running for an environment.

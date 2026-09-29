@@ -6,13 +6,15 @@ import { Btn, Led, Badge, Status, ProblemCard, ConfirmName, useAction } from "..
 
 const ACT = { create: "Create", adopt: "Use existing", update: "Update", replace: "Recreate", keep: "Keep", delete: "Delete", detach: "Stop tracking" };
 
-/** A plan rendered as a work order. Nothing runs until Approve. */
+/** A plan: everything that will change. Nothing runs until Approve. */
 export function PlanView({ plan, project, onApproved, onDiscard }) {
   const [all, setAll] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, run] = useAction();
   const blocked = plan.blockers?.length > 0;
-  const changes = (plan.operations || []).filter((o) => o.action !== "keep");
+  const steps = (plan.operations || []).filter((o) => o.action !== "keep");
+  const changes = steps.filter((o) => !o.recheck);
+  const rechecks = steps.length - changes.length;
   const approve = async (confirm = "") => {
     try {
       const r = await run(() => call("Approve", { planId: plan.id, confirm }));
@@ -27,9 +29,9 @@ export function PlanView({ plan, project, onApproved, onDiscard }) {
     <div class="wo">
       <div class="wo-head">
         <div>
-          <div class="wo-no">WORK ORDER {plan.id.split("_").pop().toUpperCase()} · {when(plan.createdAt)}</div>
-          <div class="h2" style="margin-top:4px">{plan.purpose || (changes.length ? `${changes.length} change${changes.length === 1 ? "" : "s"} to make` : "Nothing to change")}</div>
-          <div class="small ink2" style="margin-top:2px">{project?.name} · {countsLine(plan.counts)}</div>
+          <div class="wo-no">PLAN {plan.id.split("_").pop().toUpperCase()} · {when(plan.createdAt)}</div>
+          <div class="h2" style="margin-top:4px">{plan.purpose || (changes.length ? `${changes.length} change${changes.length === 1 ? "" : "s"} to make` : steps.length ? "Re-check connected parts" : "Nothing to change")}</div>
+          <div class="small ink2" style="margin-top:2px">{project?.name} · {countsLine({ ...plan.counts, update: (plan.counts?.update || 0) - rechecks })}{rechecks ? ` · ${rechecks} connected part${rechecks === 1 ? "" : "s"} re-checked (usually no change)` : ""}</div>
         </div>
         {plan.practice ? <span class="stamp practice">Practice</span> : <span class={`stamp ${plan.production ? "prod" : ""}`}>{plan.environment}</span>}
       </div>
@@ -39,7 +41,7 @@ export function PlanView({ plan, project, onApproved, onDiscard }) {
           {(plan.warnings || []).map((w) => <div class="notice warn"><Icon name="warn" /><div>{w}</div></div>)}
           {plan.destructive ? <div class="notice fail"><Icon name="warn" /><div><b>This plan deletes resources.</b> {plan.production ? "Production deletions ask you to type the project name." : "Review the list below."}</div></div> : null}
         </div>
-        {(plan.summary || []).filter((g) => g.action !== "KEEP" || all).map((g) => (
+        {(plan.summary || []).filter((g) => (g.action !== "KEEP" && g.action !== "RE-CHECK") || all).map((g) => (
           <div class="wo-group">
             <div class="who"><b class="h3">{providerName(g.provider)}</b><span class={`act ${g.action.toLowerCase().split(" ")[0]}`}>{g.action}</span></div>
             <ul>{g.lines.map((l) => <li>{l}</li>)}</ul>
@@ -72,7 +74,7 @@ export function PlanView({ plan, project, onApproved, onDiscard }) {
                     {o.why ? <div class="why">{o.why}</div> : null}
                     {o.changes?.length ? <div class="changes">{o.changes.map((c) => <div>{c.field}: {c.actual} → {c.expected}</div>)}</div> : null}
                   </div>
-                  <span class={`act ${o.action}`}>{ACT[o.action] || o.action}</span>
+                  <span class={`act ${o.recheck ? "keep" : o.action}`}>{o.recheck ? "Re-check" : ACT[o.action] || o.action}</span>
                 </div>
               ))}
             </div>
@@ -82,8 +84,8 @@ export function PlanView({ plan, project, onApproved, onDiscard }) {
           <span class="small muted">Backplane checkpoints after every step: a stopped build resumes where it left off, and a finished one can be rolled back.</span>
           <div class="row">
             {onDiscard ? <Btn onClick={onDiscard}>Discard</Btn> : null}
-            <Btn kind={plan.destructive ? "danger" : "primary"} size="lg" icon="bolt" busy={busy} disabled={blocked || changes.length === 0} onClick={start}>
-              {changes.length === 0 ? "Already up to date" : "Approve & build"}
+            <Btn kind={plan.destructive ? "danger" : "primary"} size="lg" icon="bolt" busy={busy} disabled={blocked || steps.length === 0} onClick={start}>
+              {steps.length === 0 ? "Already up to date" : "Approve & build"}
             </Btn>
           </div>
         </div>
@@ -136,7 +138,7 @@ export function RunView({ project, env, run: initial, onDone, onCertify }) {
         <div class="row">
           {live ? <Btn icon="stop" busy={busy} onClick={cancel}>Cancel</Btn> : null}
           {(run.status === "failed" || run.status === "canceled") ? <Btn kind="primary" icon="play" busy={busy} onClick={resume}>Resume</Btn> : null}
-          {run.status === "succeeded" && onCertify ? <Btn kind="primary" icon="shield" onClick={onCertify}>Certify it now</Btn> : null}
+          {run.status === "succeeded" && onCertify ? <Btn kind="primary" icon="shield" onClick={onCertify}>Run full check</Btn> : null}
         </div>
       </div>
       <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax={ops.length} aria-valuenow={done}><i style={`width:${ops.length ? (done / ops.length) * 100 : 0}%`} /></div>

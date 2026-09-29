@@ -4,6 +4,7 @@ import { useStore, go, providerName, toast, get } from "../state.js";
 import { Icon } from "../icons.jsx";
 import { Btn, Field, Toggle, Badge, Modal, useAction, ErrorNote, ExtLink } from "../ui.jsx";
 import { refreshBoot } from "../boot.js";
+import { ProductsEditor, productErrors, emptyItem } from "../products.jsx";
 
 // Choosing a backend: describe it in plain English, or browse presets by the
 // kind of business; then review which server does which job and answer a
@@ -63,7 +64,7 @@ function PresetCard({ t, onClick, pressed }) {
     <button type="button" class="card preset" onClick={onClick} aria-pressed={pressed ? "true" : "false"}>
       <div class="spread">
         <span class="silk">{t.category}</span>
-        <Badge kind={t.level === "full" ? "accent" : ""}>{t.level === "full" ? "Complete setup" : "Foundation"}</Badge>
+        <LevelBadge level={t.level} />
       </div>
       <div class="h2" style="font-size:1.3rem">{t.name}</div>
       <div class="ink2 small">{t.summary}</div>
@@ -71,6 +72,13 @@ function PresetCard({ t, onClick, pressed }) {
       <div class="chips">{t.providers.map((p) => <span class="chip">{providerName(p)}</span>)}</div>
     </button>
   );
+}
+
+/** What a preset delivers, in plain words. */
+export function LevelBadge({ level }) {
+  return level === "full"
+    ? <Badge kind="accent">Ready to sell</Badge>
+    : <span title="Backplane builds the backend; your own app or site plugs into it."><Badge>Backend only — you bring the app</Badge></span>;
 }
 
 // ---- plain-English builder ----
@@ -151,6 +159,8 @@ function PresetForm({ tpl, design, onBack }) {
   const [answers, setAnswers] = useState(() => {
     const a = {};
     for (const q of tpl.questions) if (q.default !== undefined && q.default !== null) a[q.key] = q.default;
+    // What's for sale starts as one empty row: Backplane never names it for you.
+    for (const q of tpl.questions) if (q.kind === "products") a[q.key] = [emptyItem(q.products)];
     for (const [k, v] of Object.entries(design?.answers || {})) if (k !== "add_ons") a[k] = v;
     return a;
   });
@@ -174,6 +184,11 @@ function PresetForm({ tpl, design, onBack }) {
     for (const q of tpl.questions) {
       const v = answers[q.key];
       if (q.kind === "file") continue;
+      if (q.kind === "products") {
+        const pe = productErrors(q.products, v);
+        if (Object.keys(pe).length) e[q.key] = pe;
+        continue;
+      }
       if (q.required && (v === undefined || v === null || v === "")) e[q.key] = "Required";
       else if (v && q.kind === "domain" && !/^([a-z0-9-]+\.)+[a-z]{2,}$/i.test(String(v).replace(/^https?:\/\//, "").replace(/\/$/, ""))) e[q.key] = "Enter a domain like example.com";
       else if (v && q.kind === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v))) e[q.key] = "Enter an email address";
@@ -186,7 +201,12 @@ function PresetForm({ tpl, design, onBack }) {
   };
 
   const create = async () => {
-    if (!validate()) { toast("warn", "A few answers need attention"); return; }
+    if (!validate()) {
+      toast("warn", "A few answers need attention");
+      // Take them to the first one (the products list sits above the fold).
+      setTimeout(() => { const el = document.querySelector('.page [aria-invalid="true"]'); el?.scrollIntoView({ block: "center" }); el?.focus(); }, 0);
+      return;
+    }
     const a = { ...answers, add_ons: [...addOns] };
     delete a.product_file;
     if (practice && !get().practice) {
@@ -207,11 +227,12 @@ function PresetForm({ tpl, design, onBack }) {
       setMissing({ id: res.project.id, env, providers: res.missingConnections });
       return;
     }
-    toast("ok", `${name.trim()} is on the rack`, "Next: review the build plan.");
+    toast("ok", `${name.trim()} created`, "Next: review the build plan.");
     go("project", { id: res.project.id, env, tab: "build", autoplan: true });
   };
 
-  const visible = tpl.questions.filter((q) => !q.advanced || advanced);
+  const productsQ = tpl.questions.find((q) => q.kind === "products");
+  const visible = tpl.questions.filter((q) => (!q.advanced || advanced) && q.kind !== "products");
   return (
     <div class="page">
       <div class="page-head">
@@ -223,10 +244,18 @@ function PresetForm({ tpl, design, onBack }) {
         </div>
       </div>
 
+      {productsQ ? (
+        <div class="card" style="margin-bottom:var(--gap)">
+          <div class="card-head"><h3>{productsQ.label}</h3><span class="small muted">You can change these after the build on the Products tab.</span></div>
+          <ProductsEditor spec={productsQ.products} value={answers.products} onChange={(v) => set("products", v)} currency={answers.currency || "usd"} errors={errors.products || {}} />
+          <div class="help small muted" style="margin-top:8px">Checkout only accepts these {productsQ.products.noun}s, and prices are checked on the server — customers can't change what they pay.</div>
+        </div>
+      ) : null}
+
       <div class="grid-2" style="align-items:start">
         <div class="stack">
           <div class="card">
-            <div class="card-head"><h3>Which server does which job</h3><Badge kind={tpl.level === "full" ? "accent" : ""}>{tpl.level === "full" ? "Complete setup" : "Foundation"}</Badge></div>
+            <div class="card-head"><h3>Which server does which job</h3><LevelBadge level={tpl.level} /></div>
             <div class="spec">
               {tpl.stack.map((r) => (
                 <div class="spec-row">
@@ -257,7 +286,7 @@ function PresetForm({ tpl, design, onBack }) {
             <Field label="Backend name" error={errors.__name} help="Shown in Backplane; resource names use a short version of it.">
               {(id) => <input id={id} class="input" value={name} onInput={(e) => setName(e.currentTarget.value)} placeholder="e.g. Photo Presets Store" aria-invalid={errors.__name ? "true" : undefined} />}
             </Field>
-            {visible.map((q) => <Question q={q} value={answers[q.key]} error={errors[q.key]} onChange={(v) => set(q.key, v)} file={file} setFile={setFile} />)}
+            {visible.map((q) => <Question q={q} value={answers[q.key]} error={errors[q.key]} onChange={(v) => set(q.key, v)} file={file} setFile={setFile} currency={answers.currency} />)}
             <div class="field">
               <span class="label">Environments</span>
               <div class="stack" style="gap:6px">
@@ -272,10 +301,10 @@ function PresetForm({ tpl, design, onBack }) {
             </div>
             <div class="card flat well" style="padding:12px 14px">
               <Toggle id="practice" checked={practice} onChange={setPractice} label={<b>Practice run</b>} />
-              <div class="small ink2" style="margin-top:4px">Builds against Backplane's built-in simulator of Cloudflare, Supabase, Stripe, Resend and GitHub — free, private, and safe to break. {!practiceOn && practice ? "The sandbox starts when you build." : ""}</div>
+              <div class="small ink2" style="margin-top:4px">Builds against Backplane's built-in simulator of Cloudflare, Supabase, Stripe, Resend and GitHub — free, private, and safe to break. {!practiceOn && practice ? "Practice mode starts when you create it." : ""}</div>
             </div>
             <div class="row" style="justify-content:flex-end">
-              <Btn kind="primary" size="lg" icon="bolt" busy={busy} onClick={create}>Put it on the rack</Btn>
+              <Btn kind="primary" size="lg" icon="bolt" busy={busy} onClick={create}>Create backend</Btn>
             </div>
             <div class="small muted" style="text-align:right">Next you'll see the exact plan. Nothing is created until you approve it.</div>
           </div>
@@ -298,7 +327,16 @@ function AddOnRow({ a, on, toggle }) {
   );
 }
 
-export function Question({ q, value, error, onChange, file, setFile }) {
+export function Question({ q, value, error, onChange, file, setFile, currency }) {
+  if (q.kind === "products") {
+    return (
+      <div class="field">
+        <span class="label">{q.label}</span>
+        <ProductsEditor spec={q.products} value={value} onChange={onChange} currency={currency || "usd"} errors={error || {}} />
+        {q.help ? <div class="help">{q.help}</div> : null}
+      </div>
+    );
+  }
   if (q.kind === "toggle") {
     return <div class="field"><Toggle id={"q-" + q.key} checked={!!value} onChange={onChange} label={<b>{q.label}</b>} />{q.help ? <div class="help">{q.help}</div> : null}</div>;
   }
@@ -321,7 +359,7 @@ export function Question({ q, value, error, onChange, file, setFile }) {
             );
           default:
             return <input id={id} class="input" type={q.kind === "email" ? "email" : q.kind === "url" ? "url" : "text"} value={value ?? ""} aria-invalid={error ? "true" : undefined}
-              placeholder={q.kind === "domain" ? "example.com" : q.kind === "url" ? "https://example.com" : ""} onInput={(e) => onChange(e.currentTarget.value)} />;
+              placeholder={q.placeholder || (q.kind === "domain" ? "example.com" : q.kind === "url" ? "https://example.com" : "")} onInput={(e) => onChange(e.currentTarget.value)} />;
         }
       }}
     </Field>

@@ -77,8 +77,11 @@ type Operation struct {
 	Force bool `json:"force,omitempty"`
 	// Rotate replaces a credential-like resource (API key, webhook endpoint)
 	// with a new one and retires the old one.
-	Rotate bool           `json:"rotate,omitempty"`
-	Props  map[string]any `json:"-"`
+	Rotate bool `json:"rotate,omitempty"`
+	// Recheck marks an update that happens only because something it
+	// depends on is changing; it is often a no-op when it runs.
+	Recheck bool           `json:"recheck,omitempty"`
+	Props   map[string]any `json:"-"`
 }
 
 // Change is one property difference shown in the plan.

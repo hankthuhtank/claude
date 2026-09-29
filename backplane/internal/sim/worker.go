@@ -207,7 +207,7 @@ func bearerTok(r *http.Request) string {
 
 // ---- commerce Worker ----
 
-var commerceRequired = []string{"SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "CATALOG", "RESEND_API_KEY", "FROM_EMAIL", "DOWNLOAD_SIGNING_SECRET", "BACKPLANE_PROBE_TOKEN", "PRODUCT_NAME"}
+var commerceRequired = []string{"SUPABASE_URL", "SUPABASE_SECRET_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "RESEND_API_KEY", "FROM_EMAIL", "DOWNLOAD_SIGNING_SECRET", "BACKPLANE_PROBE_TOKEN", "PRODUCT_NAME"}
 
 // ---- catalog (mirrors the generated Workers' catalog handling) ----
 
@@ -812,6 +812,9 @@ func (s *Server) commerceHealth(w http.ResponseWriter, r *http.Request, env *wen
 		if env.get(k) == "" {
 			missing = append(missing, k)
 		}
+	}
+	if env.get("CATALOG") == "" && env.get("PRICE_ID") == "" {
+		missing = append(missing, "CATALOG")
 	}
 	checks := map[string]any{}
 	timed := func(fn func() (string, error)) map[string]any {

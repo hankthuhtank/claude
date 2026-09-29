@@ -14,11 +14,11 @@
 #   go install github.com/tc-hib/go-winres@latest
 #   sudo apt install nsis        (or: brew install makensis)
 #
-# Usage: packaging/build-windows.sh [version]      default 1.0.0
+# Usage: packaging/build-windows.sh [version]      default 1.1.0
 #        SKIP_TESTS=1 packaging/build-windows.sh   skip vet and tests
 set -euo pipefail
 
-VERSION="${1:-1.0.0}"
+VERSION="${1:-1.1.0}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must look like 1.2.3" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

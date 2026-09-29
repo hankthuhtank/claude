@@ -165,6 +165,12 @@ func orderPath(templateID string) string {
 
 func dataQuestions(t Template) []Question {
 	q := []Question{{Key: "app_url", Label: "Your app's web address", Kind: "url", Help: "Used for sign-in redirects, e.g. https://app.example.com."}}
+	switch t.ID {
+	case "booking":
+		q[0] = Question{Key: "app_url", Label: "Your booking page", Kind: "url", Help: "Where customers book, e.g. https://example.com/book. They come back here after paying, and only this site may call the booking API."}
+	case "restaurant":
+		q[0] = Question{Key: "app_url", Label: "Your ordering page", Kind: "url", Help: "Where customers order, e.g. https://example.com/order. They come back here after paying, and only this site may call the ordering API."}
+	}
 	if has(t, core.CapEmail) || has(t, core.CapAuth) {
 		q = append(q, Question{Key: "domain", Label: "Email domain", Kind: "domain", Required: has(t, core.CapEmail), Help: "Sign-in and notification emails come from this domain."},
 			Question{Key: "business_name", Label: "Business or app name (shown in emails)", Kind: "text"})
@@ -527,8 +533,12 @@ func buildData(t Template, projectName string, a Answers) (core.Blueprint, error
 		L(core.LinkSpec{Key: "stripe_api", From: "stripe", To: "api", Label: "checkout.session.completed", Kind: "webhook", Check: "stripe_webhook", Critical: true,
 			Breaks: []string{pick(t.ID == "booking", "Booking confirmations", "Order confirmations")}})
 	} else if withPay {
-		L(core.LinkSpec{Key: "app_api", From: "app", To: "api", Label: "Checkout / billing", Kind: "http", Check: "checkout_data", Critical: true, Breaks: []string{"Payments"}})
-		L(core.LinkSpec{Key: "api_stripe", From: "api", To: "stripe", Label: "Creates checkout", Kind: "http", Check: "worker_probe:stripe", Critical: true, Breaks: []string{"Payments"}})
+		if len(items) > 0 {
+			L(core.LinkSpec{Key: "app_api", From: "app", To: "api", Label: "Checkout / billing", Kind: "http", Check: "checkout_data", Critical: true, Breaks: []string{"Payments"}})
+		}
+		// Without a catalog (a marketplace's sellers set their own prices)
+		// the Worker still holds the Stripe key and receives payment events.
+		L(core.LinkSpec{Key: "api_stripe", From: "api", To: "stripe", Label: pick(len(items) > 0, "Creates checkout", "Stripe key"), Kind: "http", Check: "worker_probe:stripe", Critical: true, Breaks: []string{"Payments"}})
 		L(core.LinkSpec{Key: "stripe_api", From: "stripe", To: "api", Label: pick(subscription, "customer.subscription.*", "checkout.session.completed"), Kind: "webhook", Check: "stripe_webhook", Critical: true, Breaks: []string{"Subscription status updates"}})
 	}
 	if withGitHub {

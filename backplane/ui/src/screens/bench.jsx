@@ -5,9 +5,9 @@ import { Icon } from "../icons.jsx";
 import { Btn, Led, Badge, Status, Empty, useAction, useCall, ProblemCard } from "../ui.jsx";
 import { refreshBoot } from "../boot.js";
 
-// The Bench: a practice sandbox with a "break it" lab. Inject a real-world
+// Practice: a sandbox with a "break it" lab. Inject a real-world
 // failure, watch Backplane find it, and apply the repair.
-export function Bench() {
+export function Practice() {
   const practice = useStore((s) => s.practice);
   const boot = useStore((s) => s.boot);
   const [busy, run] = useAction();
@@ -16,13 +16,13 @@ export function Bench() {
   const [pid, setPid] = useState(projects[0]?.id || "");
   const [outcome, setOutcome] = useState(null);
   const start = async () => {
-    await run(() => call("StartPractice"), "Practice sandbox running");
+    await run(() => call("StartPractice"), "Practice mode is on");
     setState({ practice: true });
     await refreshBoot();
     state.reload(true);
   };
   const stop = async () => {
-    await run(() => call("StopPractice"), "Sandbox stopped — practice backends were reset");
+    await run(() => call("StopPractice"), "Practice mode is off — practice backends were reset");
     setState({ practice: false });
     await refreshBoot();
   };
@@ -43,7 +43,7 @@ export function Bench() {
     if (fix.action !== "repair") { go("project", { id: project.id, env: env.name, tab: "health" }); return; }
     const plan = await run(() => call("Repair", { projectId: project.id, env: env.name, fix }));
     go("project", { id: project.id, env: env.name, tab: "build", plan });
-    toast("info", "Repair planned", "Review the work order and approve it.");
+    toast("info", "Repair planned", "Review the plan and approve it.");
   };
   const groups = {};
   for (const b of state.data?.breaks || []) (groups[b.group] ||= []).push(b);
@@ -52,11 +52,11 @@ export function Bench() {
     <div class="page">
       <div class="page-head">
         <div class="grow">
-          <div class="eyebrow">Bench</div>
+          <div class="eyebrow">Practice</div>
           <h1>Practice & break it</h1>
           <p class="lede">A private simulator of Cloudflare, Supabase, Stripe, Resend and GitHub runs on this computer. Build real presets against it, then break things on purpose and watch Backplane find and fix them. Free, safe, and it resets when Backplane closes.</p>
         </div>
-        {practice ? <Btn icon="stop" busy={busy} onClick={stop}>Stop sandbox</Btn> : <Btn kind="primary" size="lg" icon="play" busy={busy} onClick={start}>Start the sandbox</Btn>}
+        {practice ? <Btn icon="stop" busy={busy} onClick={stop}>Stop practice mode</Btn> : <Btn kind="primary" size="lg" icon="play" busy={busy} onClick={start}>Start practice mode</Btn>}
       </div>
       {!practice ? null : (
         <div class="stack">
@@ -83,7 +83,7 @@ export function Bench() {
                 <div class="card stack">
                   <div class="spread">
                     <div><div class="silk">Injected</div><div class="h2">{outcome.b.label}</div><div class="small ink2">{outcome.r.message}</div></div>
-                    {!outcome.report ? <Btn kind="primary" icon={outcome.b.check === "full" ? "shield" : "pulse"} busy={busy} onClick={check}>Run {outcome.b.check === "full" ? "full certification" : "quick check"}</Btn> : null}
+                    {!outcome.report ? <Btn kind="primary" icon={outcome.b.check === "full" ? "shield" : "pulse"} busy={busy} onClick={check}>Run {outcome.b.check === "full" ? "full check" : "quick check"}</Btn> : null}
                   </div>
                   <div class="notice info"><Icon name="eye" /><div><b>What Backplane should report:</b> {outcome.b.expect}</div></div>
                   {outcome.report ? (
@@ -104,7 +104,7 @@ export function Bench() {
                         <div class="spread"><b>{b.label}</b><Badge>{providerName(b.provider)}</Badge></div>
                         <div class="small ink2">{b.explain}</div>
                         <div class="row" style="justify-content:space-between">
-                          <span class="small muted">Found by the {b.check === "full" ? "full certification" : "quick check"}</span>
+                          <span class="small muted">Found by the {b.check === "full" ? "full check" : "quick check"}</span>
                           <Btn size="sm" kind="danger" icon="bolt" busy={busy} disabled={!env?.built} onClick={() => doBreak(b)}>Break it</Btn>
                         </div>
                         {b.undo ? <button type="button" class="linkish small" style="justify-self:start" onClick={() => run(() => call("PracticeBreak", { projectId: project.id, env: env.name, break: b.undo }), "Restored")}>Undo this failure</button> : null}

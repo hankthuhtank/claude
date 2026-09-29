@@ -7,10 +7,18 @@ import { Btn, Status, Badge, Levels, ProblemCard, Strip, Stat, Modal, Toggle, us
 const VERDICT = { ok: "PASS", warn: "ATTN", fail: "FAIL", unknown: "—" };
 
 /** The certification report: verdict, six levels, every result, the punch list. */
+const ORDER = { fail: 0, warn: 1, unknown: 2, skipped: 3, ok: 4 };
+
 export function CertReport({ report, names, onFix, busyFix, live }) {
   const [level, setLevel] = useState(0);
+  const [showAll, setShowAll] = useState(false);
   if (!report) return null;
-  const results = (report.results || []).filter((r) => !level || r.level === level);
+  // Problems first; passing checks are folded away until asked for.
+  const results = (report.results || []).filter((r) => !level || r.level === level)
+    .map((r, i) => [r, i]).sort(([a, i], [b, j]) => (ORDER[a.health] ?? 2) - (ORDER[b.health] ?? 2) || i - j).map(([r]) => r);
+  const needs = results.filter((r) => r.health !== "ok");
+  const passed = results.length - needs.length;
+  const shown = showAll || live ? results : needs;
   const problems = (report.results || []).filter((r) => r.problem && (r.health === "fail" || r.health === "warn"));
   problems.sort((a, b) => (a.health === "fail" ? 0 : 1) - (b.health === "fail" ? 0 : 1));
   return (
@@ -21,15 +29,20 @@ export function CertReport({ report, names, onFix, busyFix, live }) {
             <span class={`big ${report.overall}`}>{VERDICT[report.overall] || "—"}</span>
             <div>
               <div class="headline">{report.headline}</div>
-              <div class="small ink2">{report.kind === "full" ? "Full certification" : "Quick check"} · {when(report.finishedAt || report.startedAt)} · {report.trigger}</div>
+              <div class="small ink2">{report.kind === "full" ? "Full check" : report.kind === "quick" ? "Quick check" : "Check"}{report.finishedAt || report.startedAt ? " · " + when(report.finishedAt || report.startedAt) : ""} · {report.trigger}</div>
             </div>
           </div>
           <Levels levels={report.levels} names={names} value={level} onPick={setLevel} />
         </div>
         <div class="card">
-          <div class="card-head"><h3>{level ? `Level ${level} · ${names?.[level]}` : "Every test"}</h3><span class="small muted">{results.length} result{results.length === 1 ? "" : "s"}</span></div>
+          <div class="card-head"><h3>{level ? `Level ${level} · ${names?.[level]}` : needs.length ? "Needs a look" : "Results"}</h3><span class="small muted">{needs.length ? `${needs.length} of ${results.length} need a look` : `${results.length} result${results.length === 1 ? "" : "s"}`}</span></div>
           {results.length === 0 ? <div class="muted small">No results at this level{live ? " yet" : ""}.</div> : null}
-          {results.map((r) => <ResultRow r={r} />)}
+          {shown.map((r) => <ResultRow r={r} />)}
+          {!live && passed > 0 ? (
+            <button type="button" class="linkish small passed-toggle" aria-expanded={showAll ? "true" : "false"} onClick={() => setShowAll(!showAll)}>
+              <Icon name="ok" size={14} /> {showAll ? `Hide the ${passed} passing check${passed === 1 ? "" : "s"}` : needs.length ? `${passed} passed — show all ${results.length} checks` : `All ${passed} passed — show them`}
+            </button>
+          ) : null}
         </div>
       </div>
       <div class="stack">
@@ -42,11 +55,11 @@ export function CertReport({ report, names, onFix, busyFix, live }) {
         </div>
         {problems.length ? (
           <div class="stack" style="gap:10px">
-            <h3>Punch list</h3>
+            <h3>What to fix</h3>
             {problems.map((r) => <ProblemCard problem={r.problem} health={r.health} onFix={onFix} busy={busyFix} />)}
           </div>
         ) : report.overall === "ok" ? (
-          <div class="notice ok"><Icon name="ok" /><div>Nothing to fix. {report.kind === "quick" ? "Run a full certification to exercise payments, email and storage end to end." : ""}</div></div>
+          <div class="notice ok"><Icon name="ok" /><div>Nothing to fix. {report.kind === "quick" ? "Run a full check to exercise payments, email and storage end to end." : ""}</div></div>
         ) : null}
       </div>
     </div>
@@ -98,24 +111,24 @@ export function HealthTab({ dash, project, env, onFix, busyFix, reload }) {
   const checking = dash.checking || !!live;
   const liveReport = live ? {
     overall: live.results.some((r) => r.health === "fail") ? "fail" : live.results.some((r) => r.health === "warn") ? "warn" : "unknown",
-    headline: `${live.kind === "full" ? "Certifying" : "Checking"}… ${live.results.length} test${live.results.length === 1 ? "" : "s"} done`,
+    headline: `${live.kind === "full" ? "Running full check" : "Checking"}… ${live.results.length} test${live.results.length === 1 ? "" : "s"} done`,
     kind: live.kind, trigger: "running", results: live.results, levels: levelsOf(live.results), capabilities: [],
   } : null;
   return (
     <div class="stack">
       <div class="spread">
         <div class="small ink2" style="max-width:70ch">
-          <b>Quick check</b> (levels 1–4) reads configuration and tests every connection without writing anything. <b>Full certification</b> adds functional tests and a real end-to-end journey with test data that is cleaned up afterwards — nothing is ever charged.
+          <b>Quick check</b> (levels 1–4) reads configuration and tests every connection without writing anything. <b>Full check</b> adds functional tests and a real end-to-end journey with test data that is cleaned up afterwards — nothing is ever charged.
         </div>
         <div class="row">
           {stripeLive ? <Toggle id="liveprobes" checked={liveProbes} onChange={setLiveProbes} label={<span class="small">Live-mode delivery probe</span>} /> : null}
           {checking ? <Btn icon="stop" busy={busy} onClick={cancel}>Stop</Btn> : null}
           <Btn icon="pulse" busy={busy} disabled={checking || !built} onClick={() => start("quick")}>Quick check</Btn>
-          <Btn kind="primary" icon="shield" busy={busy} disabled={checking || !built} onClick={() => start("full")}>Full certification</Btn>
+          <Btn kind="primary" icon="shield" busy={busy} disabled={checking || !built} onClick={() => start("full")}>Full check</Btn>
         </div>
       </div>
-      {!built ? <Empty icon="shield" title="Build it first">Certification tests what exists. Plan and build this backend from the Build tab.</Empty> : null}
-      {liveReport ? <CertReport report={liveReport} names={dash.levelNames} live onFix={onFix} busyFix={busyFix} /> : dash.report ? <CertReport report={dash.report} names={dash.levelNames} onFix={onFix} busyFix={busyFix} /> : built ? <Empty icon="shield" title="Not certified yet" action={<Btn kind="primary" icon="shield" onClick={() => start("full")}>Run full certification</Btn>}>Run the first certification to see every connection proven.</Empty> : null}
+      {!built ? <Empty icon="shield" title="Build it first">Checks test what exists. Plan and build this backend from the Build tab.</Empty> : null}
+      {liveReport ? <CertReport report={liveReport} names={dash.levelNames} live onFix={onFix} busyFix={busyFix} /> : dash.report ? <CertReport report={dash.report} names={dash.levelNames} onFix={onFix} busyFix={busyFix} /> : built ? <Empty icon="shield" title="Not checked yet" action={<Btn kind="primary" icon="shield" onClick={() => start("full")}>Run full check</Btn>}>Run the first full check to see every connection proven.</Empty> : null}
     </div>
   );
 }
@@ -139,7 +152,7 @@ export function HistoryTab({ dash, project, env }) {
         <Stat label="Healthy, last 24 hours" value={pct(dash.uptime?.["24h"])} sub="Share of checks that passed or only warned" />
         <Stat label="Healthy, last 7 days" value={pct(dash.uptime?.["7d"])} />
         <Stat label="Healthy, last 30 days" value={pct(dash.uptime?.["30d"])} />
-        <Stat label="Last full certification" value={dash.manifest?.lastFullCheck ? ago(dash.manifest.lastFullCheck) : "Never"} sub={dash.monitor?.nextFull ? "Next " + when(dash.monitor.nextFull) : ""} />
+        <Stat label="Last full check" value={dash.manifest?.lastFullCheck ? ago(dash.manifest.lastFullCheck) : "Never"} sub={dash.monitor?.nextFull ? "Next " + when(dash.monitor.nextFull) : ""} />
       </div>
       <div class="card">
         <div class="card-head"><h3>Every check</h3><span class="small muted">{hist.length} recorded · newest on the right</span></div>

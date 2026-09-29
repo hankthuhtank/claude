@@ -25,7 +25,7 @@ import (
 )
 
 // Version is the application version (set at build time).
-var Version = "1.0.0"
+var Version = "1.1.0"
 
 // App is the service behind the UI.
 type App struct {

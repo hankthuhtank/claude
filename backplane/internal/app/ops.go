@@ -25,7 +25,7 @@ type PlanParams struct {
 	Teardown bool `json:"teardown"`
 }
 
-// Plan compares the blueprint with what exists and returns the work order.
+// Plan compares the blueprint with what exists and returns the plan.
 // Nothing changes until it is approved.
 func (a *App) Plan(ctx context.Context, p PlanParams) (*core.Plan, error) {
 	pr, err := a.project(p.ProjectID)

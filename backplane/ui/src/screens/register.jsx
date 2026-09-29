@@ -3,8 +3,8 @@ import { call, onEvent } from "../api.js";
 import { useStore, providerName, clock } from "../state.js";
 import { Btn, Toggle, Empty, useCall } from "../ui.jsx";
 
-// The Register: one redacted log for every provider, build and check.
-export function Register({ project: project0, runId }) {
+// Activity: one redacted log for every provider, build and check.
+export function Activity({ project: project0, runId }) {
   const boot = useStore((s) => s.boot);
   const providers = useStore((s) => s.providers);
   const [q, setQ] = useState({ project: project0 || "", provider: "", level: "info", text: "", runId: runId || "", limit: 800 });
@@ -30,11 +30,15 @@ export function Register({ project: project0, runId }) {
   const rows = [...extra, ...(data || [])];
   const set = (k, v) => setQ({ ...q, [k]: v });
   const projName = (id) => boot?.projects?.find((p) => p.id === id)?.name || "";
+  // Only services you use: connected accounts and providers in a backend.
+  const used = new Set([...(boot?.connections || []).map((c) => c.provider), ...(boot?.projects || []).flatMap((p) => p.providers || [])]);
+  if (q.provider) used.add(q.provider);
+  const services = providers.filter((p) => used.has(p.id));
   return (
     <div class="page">
       <div class="page-head">
         <div class="grow">
-          <div class="eyebrow">Register</div>
+          <div class="eyebrow">Activity</div>
           <h1>Everything that happened</h1>
           <p class="lede">Builds, checks, repairs and every provider call in one place. Secrets are masked before anything is written.</p>
         </div>
@@ -47,7 +51,7 @@ export function Register({ project: project0, runId }) {
         </select>
         <select class="select" value={q.provider} onChange={(e) => set("provider", e.currentTarget.value)} aria-label="Service">
           <option value="">All services</option>
-          {providers.map((p) => <option value={p.id}>{p.name}</option>)}
+          {services.map((p) => <option value={p.id}>{p.name}</option>)}
         </select>
         <select class="select" value={q.level} onChange={(e) => set("level", e.currentTarget.value)} aria-label="Minimum level">
           <option value="debug">Everything (incl. API calls)</option><option value="info">Info and up</option><option value="warn">Warnings and errors</option><option value="error">Errors only</option>

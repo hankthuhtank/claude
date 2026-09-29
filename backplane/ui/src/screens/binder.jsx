@@ -70,7 +70,7 @@ function What() {
   return (
     <>
       <div class="eyebrow">Backplane</div>
-      <h1 style="font-size:3rem">Your backend, racked and certified.</h1>
+      <h1 style="font-size:3rem">Your backend, built and proven.</h1>
       <p class="lede" style="font-size:1.1rem;margin-top:14px">Most businesses need the same plumbing: take payments, store orders or customers, send email, keep files safe, run a little code on a server. Wiring it together across five dashboards is where things break.</p>
       <p class="lede" style="font-size:1.1rem">Backplane sets it up from one place and then keeps proving it works. Pick a preset for your kind of business (or describe it), review a plain-English plan, approve it, and Backplane builds every piece in the right order — then tests every connection, including a real test purchase with nothing charged.</p>
       <div class="card flat well" style="margin-top:18px">
@@ -88,11 +88,11 @@ function How() {
       <h2>How a build works</h2>
       <p class="lede">This really is a sequence, and Backplane never skips a step.</p>
       <Guide steps={[
-        { title: "Describe", body: "Choose a preset by kind of business, or describe what you need. Answer a few questions — price, domain, what customers receive." },
-        { title: "Review the work order", body: "Backplane reads what already exists and lists exactly what it would create or change, why, and an honest cost estimate. Nothing has happened yet." },
+        { title: "Describe", body: "Choose a preset by kind of business, or describe what you need. List what you sell and its price (one-time, monthly or yearly), then answer a few questions — domain, what customers receive. Prices can change later on the Products tab." },
+        { title: "Review the plan", body: "Backplane reads what already exists and lists exactly what it would create or change, why, and an honest cost estimate. Nothing has happened yet." },
         { title: "Approve & build", body: "Steps run in dependency order with retries and a checkpoint after each one. If something fails, fix it and resume — finished steps aren't repeated. Finished builds can be rolled back." },
-        { title: "Certify", body: "Six levels of checks, from “is the key valid” to a full test purchase that is cleaned up afterwards. The result: FULLY OPERATIONAL, or a punch list with plain-English fixes." },
-        { title: "Monitor", body: "Quick checks run on a schedule, full certifications daily. If something changes outside Backplane — a deleted bucket, a disabled webhook, row security turned off — you're told what broke, what still works, and the safe repair." },
+        { title: "Run a full check", body: "Six levels of checks, from “is the key valid” to a full test purchase that is cleaned up afterwards. The result: FULLY OPERATIONAL, or a list of what to fix, in plain English." },
+        { title: "Monitor", body: "Quick checks run on a schedule, full checks daily. If something changes outside Backplane — a deleted bucket, a disabled webhook, row security turned off — you're told what broke, what still works, and the safe repair." },
       ]} />
     </>
   );
@@ -111,7 +111,7 @@ function Checks() {
   return (
     <>
       <h2>The six checks</h2>
-      <p class="lede">Every connection is proven, not assumed. Quick checks run levels 1–4 and never write anything; full certifications run all six.</p>
+      <p class="lede">Every connection is proven, not assumed. Quick checks run levels 1–4 and never write anything; full checks run all six.</p>
       <div class="stack" style="margin-top:14px;gap:10px">
         {[1, 2, 3, 4, 5, 6].map((n) => (
           <div class="row" style="align-items:flex-start;gap:14px">
@@ -154,7 +154,7 @@ function Safety() {
         <li><b>Nothing happens without a plan you approve.</b> The optional Claude assistant only suggests a preset — it never builds or deploys.</li>
         <li><b>Production is protected.</b> Deleting or rolling back production asks you to type the project name. Live Stripe keys are blocked outside production.</li>
         <li><b>Your edits are respected.</b> Generated code you change is marked USER MODIFIED and never overwritten without asking.</li>
-        <li><b>Test data is cleaned up.</b> Certification uses clearly marked probe records, test inboxes and expired checkout sessions — no card is ever charged.</li>
+        <li><b>Test data is cleaned up.</b> Checks use clearly marked probe records, test inboxes and expired checkout sessions — no card is ever charged.</li>
         <li><b>You're not locked in.</b> Export any backend as a manifest, its code, a Wrangler config and an OpenTofu starting point.</li>
       </ul>
     </>

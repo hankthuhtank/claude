@@ -206,7 +206,7 @@ footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
     <section id="start" data-title="Start here">
       <h2><span class="no">01</span>Start here</h2>
       <p>Most businesses need the same pieces wired together: take a payment, record the order, send the receipt, deliver the file, keep customers' data private. Doing that across five dashboards is where things quietly break.</p>
-      <p>Backplane does it from one place. You pick a preset for your kind of business (or describe it in plain words), read a plain-English work order, approve it, and Backplane builds every piece in the right order. Then it tests every connection, including a real test purchase where nothing is charged.</p>
+      <p>Backplane does it from one place. You pick a preset for your kind of business (or describe it in plain words), read a plain-English plan, approve it, and Backplane builds every piece in the right order. Then it tests every connection, including a real test purchase where nothing is charged.</p>
       <div class="plate">
         <div class="silk">Built on</div>
         <div class="chips"><span class="chip">Cloudflare</span><span class="chip">Supabase</span><span class="chip">Stripe</span><span class="chip">Resend</span><span class="chip">GitHub</span></div>
@@ -224,12 +224,12 @@ footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
       <div class="note">Backplane draws its window with Microsoft Edge WebView2, which Windows 11 and most Windows 10 PCs already have. If yours doesn't, Setup offers Microsoft's free download; until it's installed, Backplane opens in your web browser instead and works the same way.</div>
     </section>
 
-    <section id="bench" data-title="The Bench">
-      <h2><span class="no">03</span>Practice on the Bench</h2>
-      <p>The Bench is a practice sandbox. It starts pretend versions of Cloudflare, Supabase, Stripe, Resend and GitHub inside Backplane, with practice accounts already connected, so you can run a complete build and certification without signing up for anything.</p>
+    <section id="practice" data-title="Practice">
+      <h2><span class="no">03</span>Practice mode</h2>
+      <p><b>Practice</b> starts pretend versions of Cloudflare, Supabase, Stripe, Resend and GitHub inside Backplane, with practice accounts already connected, so you can run a complete build and full check without signing up for anything. Practice backends show a dashed <b>Practice</b> stamp and cost nothing.</p>
       <ul>
         <li><b>Break things on purpose.</b> Delete a bucket, disable a webhook or turn off row-level security, then watch Backplane notice, explain what broke, and repair it.</li>
-        <li><b>Nothing real is touched.</b> Practice backends live only on the Bench and are cleared when you start or stop it.</li>
+        <li><b>Nothing real is touched.</b> Practice backends live only in practice mode and are cleared when you stop it or close Backplane. While it's off, practice connections show as <b>Off</b> and their checks pause.</li>
         <li>It works offline.</li>
       </ul>
     </section>
@@ -255,12 +255,17 @@ footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
       <h2><span class="no">05</span>Build a backend</h2>
       <p>This really is a sequence, and Backplane never skips a step.</p>
       <ol class="steps">
-        <li><div><b>Describe.</b> In <b>Backends → New backend</b>, pick a preset by kind of business, or describe what you need in plain words. Answer a few questions: price, domain, what customers receive.</div></li>
-        <li><div><b>Review the work order.</b> Backplane reads what already exists and lists exactly what it would create or change, why, and an honest cost estimate. Nothing has happened yet.</div></li>
+        <li><div><b>Describe.</b> In <b>Backends → New backend</b>, pick a preset by kind of business, or describe what you need in plain words. List what you sell and at what price, then answer a few questions: domain, what customers receive.</div></li>
+        <li><div><b>Review the plan.</b> Backplane reads what already exists and lists exactly what it would create or change, why, and an honest cost estimate. Nothing has happened yet.</div></li>
         <li><div><b>Approve &amp; build.</b> Steps run in dependency order, with retries and a checkpoint after each one. If a step fails, fix the cause and press <b>Resume</b>: finished steps aren't repeated. A finished build can be rolled back.</div></li>
-        <li><div><b>Certify.</b> Six levels of checks, from “is the key valid” to a full test purchase that is cleaned up afterwards.</div></li>
+        <li><div><b>Run a full check.</b> Six levels of checks, from “is the key valid” to a full test purchase that is cleaned up afterwards.</div></li>
         <li><div><b>Monitor.</b> Checks keep running on a schedule, and you're told the moment something changes.</div></li>
       </ol>
+      <h3>Ready to sell, or backend only</h3>
+      <p>Presets marked <b>Ready to sell</b> (the stores, Booking and Restaurant) include everything customers touch: checkout, the webhook, records, emails and an end-to-end test. <b>Backend only — you bring the app</b> presets build the database, sign-in, storage, email and a monitored Worker; your own app or site plugs into them.</p>
+      <h3>Products &amp; prices</h3>
+      <p>Every preset that takes payments has a list of what it sells: a name, a price and one-time, monthly or yearly billing (subscription plans can offer both monthly and yearly; bookable services have a deposit and a length). Each item becomes a Stripe product and price. Your site sends only an item's key and a quantity; the price is always Stripe's, so customers can't change what they pay. Physical-goods stores and restaurants accept a cart.</p>
+      <p>Change prices any time on the backend's <b>Products</b> tab. Stripe prices can't be edited, so Backplane creates the new price first, switches your Worker to it, then retires the old one — checkout never goes without a price.</p>
       <h3>Describing it in your own words</h3>
       <p>Backplane matches your description to a preset on this PC, with no internet needed. If you add your own Anthropic API key in <b>Settings</b>, the optional Claude assistant can suggest a better fit. It receives only the description you typed (never your keys or project data), and it can only suggest: you still review and approve the plan.</p>
       <h3>Environments</h3>
@@ -271,7 +276,7 @@ footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
 
     <section id="checks" data-title="Six checks">
       <h2><span class="no">06</span>The six checks</h2>
-      <p>Every connection is proven, not assumed. <b>Quick checks</b> run levels 1–4 and never write anything. <b>Full certifications</b> run all six, using clearly marked test records that are removed afterwards. No card is ever charged.</p>
+      <p>Every connection is proven, not assumed. <b>Quick checks</b> run levels 1–4 and never write anything. <b>Full checks</b> run all six, using clearly marked test records that are removed afterwards. No card is ever charged.</p>
       <div class="readout">
         <div class="lvl quick"><span class="tag">L1</span><div><b>Provider connection</b><span>Keys are valid, the right account, the permissions Backplane needs, APIs reachable.</span></div></div>
         <div class="lvl quick"><span class="tag">L2</span><div><b>Resources exist</b><span>Everything that was built still exists; nothing deleted or renamed outside Backplane.</span></div></div>
@@ -284,7 +289,7 @@ footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
       <table>
         <thead><tr><th>Status</th><th>Means</th></tr></thead>
         <tbody>
-          <tr><td class="k"><span class="status"><i class="dot ok"></i>FULLY OPERATIONAL</span></td><td>A full certification passed, including the end-to-end journey.</td></tr>
+          <tr><td class="k"><span class="status"><i class="dot ok"></i>FULLY OPERATIONAL</span></td><td>A full check passed, including the end-to-end journey.</td></tr>
           <tr><td class="k"><span class="status"><i class="dot ok"></i>OPERATIONAL</span></td><td>Everything checked is healthy (a quick check, or a backend without a journey test).</td></tr>
           <tr><td class="k"><span class="status"><i class="dot warn"></i>NEEDS ATTENTION</span></td><td>It works, but something needs you, such as a product file not uploaded yet.</td></tr>
           <tr><td class="k"><span class="status"><i class="dot fail"></i>DEGRADED</span></td><td>Something failed, but the core of the business still works.</td></tr>
@@ -313,11 +318,11 @@ footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
     <section id="monitor" data-title="Monitoring">
       <h2><span class="no">08</span>Monitoring &amp; alerts</h2>
       <ul>
-        <li>New backends get a quick check every 30 minutes and a full certification once a day, plus a full check after every build. Change the schedule per backend on its <b>Settings</b> tab.</li>
+        <li>New backends get a quick check every 30 minutes and a full check once a day, plus one after every build. Change the schedule per backend on its <b>Settings</b> tab.</li>
         <li>When a status changes, Windows shows a notification.</li>
         <li><b>Background checks while Backplane is closed</b> are off until you turn them on in <b>Settings</b>. They add an hourly Windows task named “Backplane Monitor”, with no administrator rights needed.</li>
         <li>Backplane also watches the providers themselves: when an API it uses announces a change or retirement, it's listed with its date under <b>Settings → Provider changes</b>.</li>
-        <li><b>Register</b> is one log for every build and check across all providers, with keys and secrets scrubbed out.</li>
+        <li><b>Activity</b> is one log for every build and check across all providers, with keys and secrets scrubbed out. Its service filter lists only the services you use.</li>
       </ul>
     </section>
 
@@ -327,9 +332,9 @@ footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
       <ul>
         <li><b>what broke</b>, in plain English, and when;</li>
         <li><b>what's affected</b> (“Download delivery”) and, just as important, <b>what still works</b>;</li>
-        <li><b>the safe fix</b>. Repairs go through the same work order and approval as a build, so you see exactly what will change.</li>
+        <li><b>the safe fix</b>. Repairs go through the same plan and approval as a build, so you see exactly what will change.</li>
       </ul>
-      <p>To see how far a problem reaches, open the backend's <b>Rack</b> tab and click a unit or a patch cord. Like a cable tracer's tone, the path lights up downstream and stops at the first fault.</p>
+      <p>To see how far a problem reaches, open the backend's <b>Overview</b> tab and click a unit or a patch cord. Like a cable tracer's tone, the path lights up downstream and stops at the first fault.</p>
     </section>
 
     <section id="code" data-title="Your code">
@@ -351,7 +356,7 @@ footer { margin-top: 44px; padding-top: 16px; border-top: 1px solid var(--line);
         <li><b>Keys stay on this computer,</b> encrypted by Windows for your account. They're never written to project files, exports, generated code or logs.</li>
         <li><b>Nothing happens without a plan you approve.</b> The assistant only suggests; it never builds or deploys.</li>
         <li><b>Production is protected.</b> Destructive steps ask you to type the project name.</li>
-        <li><b>Test data is cleaned up.</b> Certification uses marked probe records, test inboxes and expired checkout sessions.</li>
+        <li><b>Test data is cleaned up.</b> Checks use marked probe records, test inboxes and expired checkout sessions.</li>
         <li><b>You're not locked in.</b> Export any backend whenever you like.</li>
       </ul>
     </section>

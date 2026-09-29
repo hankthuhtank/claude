@@ -394,3 +394,72 @@ func TestPracticeRestaurantReadyToSell(t *testing.T) {
 		t.Fatalf("21 pizzas accepted: %d", st)
 	}
 }
+
+// A full check that is still running when a build finishes must not write
+// its older copy of the manifest over the build's results.
+func TestFullCheckDoesNotOverwriteConcurrentBuild(t *testing.T) {
+	ctx := context.Background()
+	a := newPracticeApp(t)
+	id := buildPractice(t, a, "digital-downloads", map[string]any{"domain": "templates.shop", "products": []any{
+		map[string]any{"key": "pack", "name": "Template pack", "price": 12.0},
+	}})
+	if _, err := a.Check(ctx, CheckParams{ProjectID: id, Env: core.EnvProduction, Kind: core.CheckFull}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the check to start", func() bool { return a.Engine.CheckRunning(id, core.EnvProduction) })
+	if _, err := a.UpdateProject(ctx, UpdateProjectParams{ID: id, Answers: map[string]any{"products": []any{map[string]any{"key": "pack", "name": "Template pack", "price": 14.0}}}}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := a.Plan(ctx, PlanParams{ProjectID: id, Env: core.EnvProduction})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := a.Approve(ctx, ApproveParams{PlanID: plan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Engine.Wait(run.ID, time.Minute)
+	if !a.Engine.CheckRunning(id, core.EnvProduction) {
+		t.Log("the check finished before the build; the race was not exercised this time")
+	}
+	deadline := time.Now().Add(2 * time.Minute)
+	for a.Engine.CheckRunning(id, core.EnvProduction) && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	man, _ := a.Store.LoadManifest(id, core.EnvProduction)
+	if st := man.Resources["price_pack_once"]; st == nil || st.Output("amount") != "1400" || man.LastFullCheck == nil {
+		t.Fatalf("after check + build: price %+v, last full check %v", st, man.LastFullCheck)
+	}
+}
+
+// Plans with monthly and yearly prices, and a marketplace that sells no
+// fixed catalog, both build and pass a full check.
+func TestPracticePlansAndMarketplace(t *testing.T) {
+	a := newPracticeApp(t)
+	saas := buildPractice(t, a, "subscription-saas", map[string]any{"domain": "app.example.com", "products": []any{
+		map[string]any{"name": "Pro", "price": 19.0, "yearlyPrice": 190.0},
+		map[string]any{"name": "Team", "price": 49.0},
+	}})
+	requireOperational(t, a, saas)
+	man, _ := a.Store.LoadManifest(saas, core.EnvProduction)
+	for _, k := range []string{"price_pro_month", "price_pro_year", "price_team_month"} {
+		if man.Resources[k] == nil {
+			t.Errorf("missing %s", k)
+		}
+	}
+	cat := getJSON(t, workerURL(t, a, saas)+"/products")
+	if items, _ := cat["items"].([]any); len(items) != 2 {
+		t.Fatalf("plans: %v", cat)
+	}
+	if st, _ := post(t, workerURL(t, a, saas)+"/billing/checkout", map[string]any{"plan": "pro"}); st != 401 {
+		t.Fatalf("billing checkout without sign-in: %d", st)
+	}
+	market := buildPractice(t, a, "marketplace", map[string]any{"domain": "makers.example.com"})
+	requireOperational(t, a, market)
+	man, _ = a.Store.LoadManifest(market, core.EnvProduction)
+	for _, st := range man.Resources {
+		if st.Kind == "stripe.price" || st.Kind == "stripe.product" {
+			t.Errorf("marketplace should not create a fixed %s", st.Kind)
+		}
+	}
+}

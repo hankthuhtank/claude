@@ -59,7 +59,7 @@ func TestStopPracticeSwitchesEverythingOff(t *testing.T) {
 		t.Error("a check of a practice backend ran with practice mode off")
 	}
 
-	logs, _ := a.Logs(ctx, store.LogQuery{Text: "Practice sandbox stopped", Limit: 5})
+	logs, _ := a.Logs(ctx, store.LogQuery{Text: "Practice mode stopped", Limit: 5})
 	if len(logs) == 0 {
 		t.Error("stopping practice mode was not logged")
 	}

@@ -58,10 +58,21 @@ func (a *App) Products(ctx context.Context, p DashboardParams) (*ProductsView, e
 		return v, nil
 	}
 	want := map[string]bool{}
-	for _, it := range blueprints.CatalogItems(&pr.Blueprint) {
+	items := blueprints.CatalogItems(&pr.Blueprint)
+	legacy := false
+	if len(items) == 0 {
+		// Built before products & prices: one item from the old answers,
+		// sold through the single "price" resource until the next build.
+		items, _ = blueprints.Items(t, pr.Answers, pr.Name)
+		legacy = pr.Blueprint.ResourceByKey("price") != nil
+	}
+	for i, it := range items {
 		row := ProductRow{Item: it}
 		for _, iv := range it.Intervals() {
 			key := blueprints.PriceKey(it.Key, iv)
+			if legacy && i == 0 && iv == it.Billing {
+				key = "price"
+			}
 			want[key] = true
 			price := PriceRow{Interval: iv, Amount: it.CentsFor(iv), Status: "new"}
 			if st := man.Resources[key]; st != nil && st.Status != core.StateDeleted {

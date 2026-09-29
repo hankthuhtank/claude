@@ -10,6 +10,7 @@ const P = {
   check: <path d="M4.5 12.5l5 5 10-11" />,
   warn: <><path d="M12 3.5l9.5 16.5h-19z" /><path d="M12 10v4.5M12 17.2v.3" /></>,
   x: <path d="M6 6l12 12M18 6L6 18" />,
+  tag: <><path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-6.1 6.1a1.5 1.5 0 0 1-2.1 0z" /><circle cx="8" cy="8" r="1.4" /></>,
   fail: <><circle cx="12" cy="12" r="9" /><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" /></>,
   ok: <><circle cx="12" cy="12" r="9" /><path d="M7.8 12.3l3 3 5.5-6" /></>,
   dot: <circle cx="12" cy="12" r="4" />,

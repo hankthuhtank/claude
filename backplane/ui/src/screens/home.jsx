@@ -16,9 +16,9 @@ export function Home() {
     <div class="page">
       <div class="page-head">
         <div class="grow">
-          <div class="eyebrow">Your rack</div>
+          <div class="eyebrow">Your backends</div>
           <h1>Backends</h1>
-          <p class="lede">Every backend you run, with the result of its latest certification. Pick one to trace its connections, check it, or change it.</p>
+          <p class="lede">Every backend you run, with the result of its latest check. Pick one to trace its connections, check it, or change it.</p>
         </div>
         <div class="row">
           <Btn icon="import" onClick={() => setImporting(true)}>Import existing</Btn>
@@ -27,10 +27,10 @@ export function Home() {
       </div>
 
       {projects.length === 0 ? (
-        <Empty title="The rack is empty" icon="rack"
+        <Empty title="No backends yet" icon="rack"
           action={<div class="row" style="justify-content:center">
             <Btn kind="primary" icon="plus" onClick={() => go("new")}>Set up a backend</Btn>
-            <Btn icon="flask" onClick={() => go("bench")}>Try it in the practice sandbox</Btn>
+            <Btn icon="flask" onClick={() => go("practice")}>Try it in practice mode</Btn>
           </div>}>
           Start from a preset for your kind of business — a store, bookings, a CRM, a membership site — or describe what you need in plain English. Nothing is created until you approve a plan.
         </Empty>
@@ -40,8 +40,8 @@ export function Home() {
       {prac.length ? (
         <div style="margin-top:28px">
           <div class="spread" style="margin-bottom:10px">
-            <div class="row"><h2>Practice</h2><Badge led={practice ? "ok" : undefined}>{practice ? "Sandbox running" : "Sandbox off"}</Badge></div>
-            {!practice ? <Btn size="sm" icon="play" onClick={() => go("bench")}>Start sandbox</Btn> : null}
+            <div class="row"><h2>Practice</h2><Badge led={practice ? "ok" : undefined}>{practice ? "Practice mode on" : "Practice mode off"}</Badge></div>
+            {!practice ? <Btn size="sm" icon="play" onClick={() => go("practice")}>Start practice mode</Btn> : null}
           </div>
           <RackList projects={prac} />
         </div>

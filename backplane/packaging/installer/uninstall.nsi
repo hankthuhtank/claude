@@ -3,7 +3,7 @@
 ; the installer came in. If the program folder was deleted by hand, it offers
 ; to clean up the leftover shortcuts, background check and registration.
 ;
-;   makensis -DVERSION=1.0.0 -DSTAGE=<stage dir> -DOUTFILE=<exe> uninstall.nsi
+;   makensis -DVERSION=1.1.0 -DSTAGE=<stage dir> -DOUTFILE=<exe> uninstall.nsi
 
 Target amd64-unicode
 ManifestDPIAware true
@@ -12,7 +12,7 @@ SetCompressor /SOLID lzma
 SilentInstall silent
 
 !ifndef VERSION
-  !define VERSION "1.0.0"
+  !define VERSION "1.1.0"
 !endif
 !ifndef STAGE
   !error "Pass -DSTAGE=<folder with the staged files>"
