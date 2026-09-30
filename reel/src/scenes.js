@@ -19,7 +19,7 @@ const XS = new Map();
 function xsFor(ctx, s) { const k = ctx.font + '|' + ctx.letterSpacing + '|' + s; let v = XS.get(k); if (!v) { v = charXs(ctx, s); XS.set(k, v); } return v; }
 
 // module header: small index + big name, rises in, fades out
-function header(ctx, t, idx, name, t0, t1, col = COL.amber) {
+function header(ctx, t, idx, name, t0, t1, col = COL.acc) {
   const out = P(t, t1 - 0.14, t1, E.inCubic);
   if (t < t0 || out >= 1) return;
   ctx.save(); ctx.globalAlpha *= 1 - out; ctx.translate(0, -out * 30);
@@ -34,7 +34,7 @@ function caption(ctx, t, s, t0, t1, o = {}) {
   if (t < t0 || t > t1) return;
   const a = 1 - P(t, t1 - 0.12, t1, E.inCubic);
   const vis = typed(s, t, t0, o.cps || 75);
-  const x = o.x ?? M, y = o.y ?? 948, size = o.size || 30, col = o.col || COL.amber;
+  const x = o.x ?? M, y = o.y ?? 948, size = o.size || 30, col = o.col || COL.acc;
   ctx.save(); ctx.globalAlpha *= a;
   font(ctx, 'mn', o.wt || 400, size, 0.04);
   let w = tw(ctx, s);
@@ -51,7 +51,7 @@ function caption(ctx, t, s, t0, t1, o = {}) {
 }
 
 // ── background: registration-cross grid ──────────────────────────────────
-function bgGrid(ctx, t, a, ox = 0, oy = 0, col = COL.amber) {
+function bgGrid(ctx, t, a, ox = 0, oy = 0, col = COL.acc) {
   if (a <= 0.001) return;
   ctx.save(); ctx.strokeStyle = rgba(col, 0.16 * a); ctx.lineWidth = 1.5;
   const step = 120, dx = ((ox % step) + step) % step, dy = ((oy % step) + step) % step;
@@ -84,7 +84,7 @@ function drawS1(ctx, t) {
   ctx.translate(CX + sh.x, CY + sh.y); ctx.rotate(sh.r); ctx.scale(cam, cam); ctx.translate(-CX, -CY);
   for (const b of S1.bells) {                       // bell pressure waves
     const u = inv(b, b + 0.8, t); if (u <= 0 || u >= 1) continue;
-    ctx.strokeStyle = rgba(COL.amber, 0.28 * (1 - u)); ctx.lineWidth = 1.5 + 5 * (1 - u);
+    ctx.strokeStyle = rgba(COL.acc, 0.28 * (1 - u)); ctx.lineWidth = 1.5 + 5 * (1 - u);
     ctx.beginPath(); ctx.arc(CX, CY, 260 + E.outCubic(u) * 1000, 0, TAU); ctx.stroke();
   }
   const bp = bellPulse(t, S1.bells);
@@ -108,7 +108,7 @@ function drawS1(ctx, t) {
   text(ctx, 'PRE-MARKET', bx0, top, { fam: 'mc', wt: 600, size: 22, track: 0.32, alpha: la });
   text(ctx, 'NEW YORK · ET', bx1, top, { fam: 'mc', wt: 600, size: 22, track: 0.32, alpha: la, align: 1 });
   const lab = ['OPENING BELL IN 3', 'OPENING BELL IN 2', 'OPENING BELL IN 1', 'THE MARKET IS OPEN'][k];
-  text(ctx, lab, CX, bot, { fam: 'mc', wt: 600, size: 22, track: 0.32, alpha: la * (k === 3 ? 1 : 0.75), align: 0.5, col: k === 3 ? COL.hot : COL.amber });
+  text(ctx, lab, CX, bot, { fam: 'mc', wt: 600, size: 22, track: 0.32, alpha: la * (k === 3 ? 1 : 0.75), align: 0.5, col: k === 3 ? COL.hot : COL.acc });
   ctx.restore();
 }
 
@@ -193,14 +193,14 @@ function drawS2(ctx, t) {
     for (let i = 0; i < S2.s.length; i++) {
       if (i === S2.iI && t >= 3.8) continue;
       const st = (i / S2.s.length) * 0.03, u = E.inCubic(inv(3.83 + st, 3.95 + st, t));
-      ctx.globalAlpha = 1 - u; ctx.fillStyle = COL.amber;
+      ctx.globalAlpha = 1 - u; ctx.fillStyle = COL.acc;
       ctx.fillText(S2.s[i], S2.x0 + S2.xs[i], S2.yb + u * 90);
     }
     ctx.restore();
     if (t < fuse1 + 0.04) {                  // the scan bar itself
       const a = 1 - inv(fuse1, fuse1 + 0.04, t);
       const g = ctx.createLinearGradient(scan - 40, 0, scan + 6, 0);
-      g.addColorStop(0, rgba(COL.amber, 0)); g.addColorStop(1, rgba(COL.hot, 0.9 * a));
+      g.addColorStop(0, rgba(COL.acc, 0)); g.addColorStop(1, rgba(COL.hot, 0.9 * a));
       ctx.fillStyle = g; ctx.fillRect(scan - 40, S2.capTop - 30, 46, S2.yb - S2.capTop + 60);
     }
   }
@@ -209,7 +209,7 @@ function drawS2(ctx, t) {
     const u = E.ioQuart(inv(3.8, 4.0, t)), R = S2.Irect, B = HERO.bodyScreen;
     const x = lerp(R.x, B.x, u), y = lerp(R.y, B.y, u), w = lerp(R.w, B.w, u), h = lerp(R.h, B.h, u);
     const wk = E.snap(inv(3.9, 4.0, t));
-    ctx.fillStyle = COL.amber;
+    ctx.fillStyle = mixc(COL.acc, PAL.green, u);
     if (wk > 0) {
       const cxw = x + w / 2, ww = HERO.wickW;
       ctx.fillRect(cxw - ww / 2, y - (y - HERO.highY) * wk, ww, (y - HERO.highY) * wk);
@@ -222,7 +222,7 @@ function drawS2(ctx, t) {
     ctx.save(); ctx.globalAlpha *= 1 - E.inCubic(exitU);
     ctx.translate(0, E.inCubic(exitU) * 60);
     const vis = typed(S2.sub, t, 2.78, 90);
-    font(ctx, 'mn', 400, 34, 0.04); ctx.fillStyle = COL.amber;
+    font(ctx, 'mn', 400, 34, 0.04); ctx.fillStyle = COL.acc;
     ctx.fillText(vis, S2.x0 + 6, S2.yb + 92);
     const vw = ctx.measureText(vis).width;
     if (vis.length < S2.sub.length || cursorOn(t)) ctx.fillRect(S2.x0 + 6 + vw + 6, S2.yb + 92 - 27, 19, 33);
@@ -238,10 +238,10 @@ function drawS2(ctx, t) {
     ctx.globalAlpha *= clamp(pop * 1.6) * (1 - fall);
     ctx.translate(R.x + R.w / 2, R.y + R.h / 2 + fall * 70); ctx.scale(0.7 + 0.3 * pop, 0.7 + 0.3 * pop); ctx.translate(-R.w / 2, -R.h / 2);
     const dy = pressed ? 5 : 0;
-    rrect(ctx, 0, 6, R.w, R.h, 9); ctx.fillStyle = rgba(COL.amber, 0.35); ctx.fill();
-    rrect(ctx, 0, dy, R.w, R.h, 9); ctx.fillStyle = pressed ? COL.amber : COL.ink; ctx.fill();
-    ctx.strokeStyle = COL.amber; ctx.lineWidth = 2; ctx.stroke();
-    font(ctx, 'mc', 700, 24, 0.14); ctx.fillStyle = pressed ? COL.ink : COL.amber;
+    rrect(ctx, 0, 6, R.w, R.h, 9); ctx.fillStyle = rgba(COL.acc, 0.35); ctx.fill();
+    rrect(ctx, 0, dy, R.w, R.h, 9); ctx.fillStyle = pressed ? COL.acc : COL.ink; ctx.fill();
+    ctx.strokeStyle = COL.acc; ctx.lineWidth = 2; ctx.stroke();
+    font(ctx, 'mc', 700, 24, 0.14); ctx.fillStyle = pressed ? COL.ink : COL.acc;
     ctx.fillText(S2.keys[i], 26, dy + R.h / 2 + 8);
     if (pressed) { const f = 1 - inv(S2.pressT, S2.pressT + 0.15, t); if (f > 0) { rrect(ctx, -6, dy - 6, R.w + 12, R.h + 12, 12); ctx.strokeStyle = rgba(COL.hot, f); ctx.lineWidth = 3; ctx.stroke(); } }
     ctx.restore();
@@ -296,8 +296,8 @@ function drawS3(ctx, t) {
   for (let p = 100; p <= 130; p += 5) {
     const y = toS(0, py3(p))[1]; if (y < 110 || y > H - 110) continue;
     const a = 0.5 * P(t, 4.3, 4.9, E.outCubic) * (1 - col);
-    ctx.fillStyle = rgba(COL.amber, 0.12 * a / 0.5); ctx.fillRect(0, Math.round(y), W - 150, 1);
-    ctx.fillStyle = rgba(COL.amber, a); ctx.fillText(p.toFixed(2), W - 130, y + 6);
+    ctx.fillStyle = rgba(COL.acc, 0.12 * a / 0.5); ctx.fillRect(0, Math.round(y), W - 150, 1);
+    ctx.fillStyle = rgba(COL.acc, a); ctx.fillText(p.toFixed(2), W - 130, y + 6);
   }
   ctx.restore();
   // candles (collapse staggered left→right)
@@ -315,15 +315,15 @@ function drawS3(ctx, t) {
     const a = (i === S3.hero ? 1 : P(t, 4.44, 4.8, E.outCubic)) * (1 - ci * 0.9);
     if (a <= 0) continue;
     ctx.globalAlpha = a;
-    ctx.fillStyle = COL.amber; ctx.strokeStyle = COL.amber;
+    ctx.fillStyle = COL.acc; ctx.strokeStyle = COL.acc;
     ctx.fillRect(xm - ww / 2, yH, ww, Math.max(0, y0 - yH)); ctx.fillRect(xm - ww / 2, y1, ww, Math.max(0, yL - y1));
     if (up || i === S3.hero) ctx.fillRect(x0, y0, x1 - x0, Math.max(ww, y1 - y0));
-    else { const lw = Math.max(1.6, 1.6 * s); ctx.lineWidth = lw; ctx.strokeRect(x0 + lw / 2, y0 + lw / 2, x1 - x0 - lw, Math.max(0, y1 - y0 - lw)); }
+    else { const lw = Math.max(1.6, 1.6 * s); ctx.lineWidth = lw; ctx.strokeStyle = COL.stop; ctx.fillStyle = COL.stop; ctx.fillRect(xm - ww / 2, yH, ww, Math.max(0, y0 - yH)); ctx.fillRect(xm - ww / 2, y1, ww, Math.max(0, yL - y1)); ctx.strokeRect(x0 + lw / 2, y0 + lw / 2, x1 - x0 - lw, Math.max(0, y1 - y0 - lw)); }
   }
   ctx.globalAlpha = 1; ctx.restore();
   // close line appears as candles collapse (hand-off to OPTIONS)
   if (lineA > 0) {
-    ctx.save(); ctx.globalAlpha = lineA; ctx.strokeStyle = COL.amber; ctx.lineWidth = 3; ctx.lineJoin = 'round';
+    ctx.save(); ctx.globalAlpha = lineA; ctx.strokeStyle = COL.acc; ctx.lineWidth = 3; ctx.lineJoin = 'round';
     ctx.beginPath(); for (let i = 0; i < S3.N; i++) { const [x, y] = toS(cx3(i), py3(S3.C[i])); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); ctx.restore();
   }
   // O/H/L/C read-outs on the hero
@@ -334,18 +334,18 @@ function drawS3(ctx, t) {
       if (t < t0) return;
       const u = E.snap(inv(t0, t0 + 0.14, t)), x0 = side < 0 ? B.x - 24 : B.x + B.w + 24, x1 = x0 + side * (side < 0 ? 84 : 150) * u;
       ctx.save(); ctx.globalAlpha *= la;
-      ctx.strokeStyle = COL.amber; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
-      ctx.fillStyle = COL.amber; ctx.fillRect(x0 - 3, y - 3, 6, 6);
+      ctx.strokeStyle = COL.acc; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+      ctx.fillStyle = COL.acc; ctx.fillRect(x0 - 3, y - 3, 6, 6);
       font(ctx, 'mc', 600, 22, 0.16);
       const s1 = typed(lab, t, t0 + 0.02, 70), s2 = typed(val, t, t0 + 0.06, 70);
-      if (side < 0) { const w2 = ctx.measureText(val).width; ctx.fillStyle = COL.hot; ctx.fillText(s2, x1 - 14 - w2, y + 8); ctx.fillStyle = COL.amber; ctx.fillText(s1, x1 - 14 - w2 - 18 - ctx.measureText(lab).width, y + 8); }
-      else { ctx.fillStyle = COL.amber; ctx.fillText(s1, x1 + 14, y + 8); ctx.fillStyle = COL.hot; ctx.fillText(s2, x1 + 14 + ctx.measureText(lab).width + 18, y + 8); }
+      if (side < 0) { const w2 = ctx.measureText(val).width; ctx.fillStyle = COL.hot; ctx.fillText(s2, x1 - 14 - w2, y + 8); ctx.fillStyle = COL.acc; ctx.fillText(s1, x1 - 14 - w2 - 18 - ctx.measureText(lab).width, y + 8); }
+      else { ctx.fillStyle = COL.acc; ctx.fillText(s1, x1 + 14, y + 8); ctx.fillStyle = COL.hot; ctx.fillText(s2, x1 + 14 + ctx.measureText(lab).width + 18, y + 8); }
       ctx.restore();
     };
     tag('HIGH', '125.00', HERO.highY, -1, 4.06); tag('CLOSE', '124.60', B.y, 1, 4.12);
     tag('OPEN', '118.40', B.y + B.h, 1, 4.18); tag('LOW', '118.10', HERO.lowY, -1, 4.24);
     const nm = 'BULLISH MARUBOZU';
-    if (t > 4.3) { ctx.save(); ctx.globalAlpha *= la; font(ctx, 'mc', 700, 20, 0.3); ctx.fillStyle = COL.amber; const v = typed(nm, t, 4.3, 90); ctx.fillText(v, xm - tw(ctx, nm) / 2, HERO.highY - 44); ctx.restore(); }
+    if (t > 4.3) { ctx.save(); ctx.globalAlpha *= la; font(ctx, 'mc', 700, 20, 0.3); ctx.fillStyle = COL.acc; const v = typed(nm, t, 4.3, 90); ctx.fillText(v, xm - tw(ctx, nm) / 2, HERO.highY - 44); ctx.restore(); }
   }
   // crosshair locked to the hero close while the camera pulls out
   { const ca = P(t, 4.0, 4.12, E.outCubic) * (1 - P(t, 4.9, 5.1, E.lin));
@@ -363,9 +363,9 @@ function drawS3(ctx, t) {
       if (t < t0) return; const pu = E.snap(inv(t0, t0 + 0.18, t));
       let hi = 0; for (let i = i0; i <= i1; i++) hi = Math.max(hi, S3.Hh[i]);
       const [x0, y] = toS(cx3(i0), py3(hi) - 26), [x1] = toS(cx3(i1), 0), xm = (x0 + x1) / 2;
-      ctx.strokeStyle = COL.amber; ctx.lineWidth = 2;
+      ctx.strokeStyle = COL.acc; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(xm - (xm - x0) * pu, y + 12); ctx.lineTo(xm - (xm - x0) * pu, y); ctx.lineTo(xm + (x1 - xm) * pu, y); ctx.lineTo(xm + (x1 - xm) * pu, y + 12); ctx.stroke();
-      font(ctx, 'mc', 700, 18, 0.28); const v = typed(lab, t, t0 + 0.03, 90); ctx.fillStyle = COL.amber;
+      font(ctx, 'mc', 700, 18, 0.28); const v = typed(lab, t, t0 + 0.03, 90); ctx.fillStyle = COL.acc;
       ctx.fillText(v, xm - tw(ctx, lab) / 2, y - 16);
     };
     peak(11, 17, 'LEFT SHOULDER', 5.24); peak(29, 35, 'HEAD', 5.34); peak(47, 53, 'RIGHT SHOULDER', 5.44);
@@ -433,7 +433,7 @@ function drawS4(ctx, t) {
   const m = E.ioCubic(inv(5.84, 6.12, t));
   const axA = 1 - P(t, 7.8, 7.95, E.lin);
   ctx.save(); ctx.globalAlpha = axA;
-  ctx.strokeStyle = rgba(COL.amber, lerp(1, 0.45, m)); ctx.lineWidth = lerp(3, 1.5, m);
+  ctx.strokeStyle = mixc(PAL.green, COL.acc, m, lerp(1, 0.45, m)); ctx.lineWidth = lerp(3, 1.5, m);
   ctx.beginPath();
   for (let i = 0; i < n; i++) { const st = clamp(m * 1.3 - (i / n) * 0.3); const x = lerp(S4.close[i][0], S4.X[i], st), y = lerp(S4.close[i][1], S4.y0, st); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
   ctx.stroke();
@@ -442,10 +442,10 @@ function drawS4(ctx, t) {
   font(ctx, 'mc', 600, 18, 0.1);
   for (const k of [90, 95, 100, 105, 110]) {
     const x = lerp(S4.x0, S4.x1, (k - 80) / 40);
-    ctx.fillStyle = rgba(COL.amber, 0.6 * ta); ctx.fillRect(x - 1, S4.y0 - 6, 2, 12);
+    ctx.fillStyle = rgba(COL.acc, 0.6 * ta); ctx.fillRect(x - 1, S4.y0 - 6, 2, 12);
     ctx.fillText(String(k), x - tw(ctx, String(k)) / 2, S4.y0 + 246);
   }
-  ctx.fillStyle = rgba(COL.amber, 0.5 * ta); ctx.fillText('STRIKE', S4.x1 + 20, S4.y0 + 246);
+  ctx.fillStyle = rgba(COL.acc, 0.5 * ta); ctx.fillText('STRIKE', S4.x1 + 20, S4.y0 + 246);
   ctx.fillText('P&L', S4.x0 - 70, S4.y0 - 160);
   ctx.restore();
   // chart clip
@@ -457,7 +457,7 @@ function drawS4(ctx, t) {
     S4.legs.forEach((l, j) => {
       const t0 = 6.1 + j * 0.08, u = E.outCubic(inv(t0, t0 + 0.22, t)); if (u <= 0) return;
       const pts = S4.X.map((x, i) => [x, lerp(l.y[i], S4.sum[i], E.ioCubic(clamp(mg * 1.3 - (i / n) * 0.3)))]);
-      ctx.save(); ctx.globalAlpha = legA * 0.85; ctx.strokeStyle = COL.amber; ctx.lineWidth = 2; ctx.setLineDash(j % 2 ? [8, 6] : []);
+      ctx.save(); ctx.globalAlpha = legA * 0.85; ctx.strokeStyle = COL.acc; ctx.lineWidth = 2; ctx.setLineDash(j % 2 ? [8, 6] : []);
       const L = polyLen(pts); polyPath(ctx, pts, L, 0, L[L.length - 1] * u); ctx.stroke(); ctx.restore();
       const kx = lerp(S4.x0, S4.x1, (l.kx - 80) / 40), ki = Math.round(((l.kx - 80) / 40) * (n - 1));
       const ly = pts[ki][1] + (j % 2 ? 44 : -26);
@@ -475,13 +475,13 @@ function drawS4(ctx, t) {
         ctx.beginPath(); ctx.moveTo(S4.X[0], S4.y0);
         for (let i = 0; i < n; i++) ctx.lineTo(S4.X[i], pos ? Math.min(y[i], S4.y0) : Math.max(y[i], S4.y0));
         ctx.lineTo(S4.X[n - 1], S4.y0); ctx.closePath();
-        ctx.fillStyle = pos ? rgba(COL.amber, 0.2) : rgba(COL.stop, 0.22); ctx.fill();
-        ctx.clip(); ctx.strokeStyle = pos ? rgba(COL.amber, 0.35) : rgba(COL.stop, 0.4); ctx.lineWidth = 1.5;
+        ctx.fillStyle = pos ? rgba(COL.acc, 0.2) : rgba(COL.stop, 0.22); ctx.fill();
+        ctx.clip(); ctx.strokeStyle = pos ? rgba(COL.acc, 0.35) : rgba(COL.stop, 0.4); ctx.lineWidth = 1.5;
         ctx.beginPath(); for (let d = -600; d < 1800; d += 14) { ctx.moveTo(S4.x0 + d, 300); ctx.lineTo(S4.x0 + d + 520, 820); } ctx.stroke();
         ctx.restore();
       }
     }
-    ctx.save(); ctx.globalAlpha = bA; ctx.strokeStyle = COL.amber; ctx.lineWidth = 5; ctx.lineJoin = 'round';
+    ctx.save(); ctx.globalAlpha = bA; ctx.strokeStyle = COL.acc; ctx.lineWidth = 5; ctx.lineJoin = 'round';
     ctx.beginPath(); for (let i = 0; i < n; i++) i ? ctx.lineTo(S4.X[i], y[i]) : ctx.moveTo(S4.X[i], y[i]); ctx.stroke();
     ctx.strokeStyle = rgba(COL.hot, 0.8); ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
     // break-evens
@@ -517,7 +517,7 @@ function drawS4(ctx, t) {
     ctx.save(); ctx.fillStyle = COL.paper; ctx.beginPath(); ctx.moveTo(-50, H + 50);
     for (let i = 0; i < n; i++) { const x = lerp(S4.X[i], lerp(-60, W + 60, i / (n - 1)), u); ctx.lineTo(x, lerp(y[i], -400, u)); }
     ctx.lineTo(W + 50, H + 50); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = mixc(COL.amber, COL.paper, u); ctx.lineWidth = 5; ctx.stroke(); ctx.restore();
+    ctx.strokeStyle = mixc(COL.acc, COL.paper, u); ctx.lineWidth = 5; ctx.stroke(); ctx.restore();
   }
   header(ctx, t, '02 / 05', 'OPTIONS', 6.0, 7.9);
   caption(ctx, t, 'MULTI-LEG PAYOFF.', 6.3, 6.95, { cps: 70 });
@@ -534,18 +534,18 @@ function buildS5(ctx) {
   for (let i = 0; i < d.length; i += 4) { const n = (R() - 0.5) * 10; d[i] += n; d[i + 1] += n; d[i + 2] += n * 0.9; }
   g.putImageData(id, 0, 0);
   for (let i = 0; i < 2400; i++) {
-    g.strokeStyle = `rgba(110,88,55,${0.03 + R() * 0.06})`; g.lineWidth = 0.5 + R() * 0.9;
+    g.strokeStyle = `rgba(60,90,110,${0.03 + R() * 0.05})`; g.lineWidth = 0.5 + R() * 0.9;
     const x = R() * W, y = R() * H, a = R() * TAU, l = 5 + R() * 22;
     g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + Math.cos(a + 0.6) * l * 0.5, y + Math.sin(a + 0.6) * l * 0.5, x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
   }
-  g.strokeStyle = 'rgba(22,19,15,0.06)'; g.lineWidth = 1;
+  g.strokeStyle = 'rgba(7,13,18,0.06)'; g.lineWidth = 1;
   for (let y = 60; y < H; y += 60) { g.beginPath(); g.moveTo(96, y + 0.5); g.lineTo(W - 96, y + 0.5); g.stroke(); }
-  g.setLineDash([3, 7]); g.strokeStyle = 'rgba(22,19,15,0.22)';
+  g.setLineDash([3, 7]); g.strokeStyle = 'rgba(7,13,18,0.22)';
   for (const x of [80, W - 80]) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
   g.setLineDash([]);
   for (let y = 24; y < H; y += 48) for (const x of [40, W - 40]) {
     g.fillStyle = COL.ink; g.beginPath(); g.arc(x, y, 10, 0, TAU); g.fill();
-    g.strokeStyle = 'rgba(22,19,15,0.25)'; g.lineWidth = 1.5; g.stroke();
+    g.strokeStyle = 'rgba(7,13,18,0.25)'; g.lineWidth = 1.5; g.stroke();
   }
   S5.paper = c;
   // rubber-stamp speckle mask for STOP.
@@ -706,9 +706,9 @@ function drawS6(ctx, t) {
     const sc = 1.06 - 0.06 * E.outCubic(u);
     ctx.save(); ctx.translate(CX, 560); ctx.scale(sc, sc);
     font(ctx, fam, wt, size, 0); const w = tw(ctx, s), yb = size * 0.35;
-    if (sty === 'block') { ctx.fillStyle = COL.amber; ctx.fillRect(-w / 2 - 40, yb - size * 0.86, w + 80, size * 1.02); ctx.fillStyle = COL.ink; ctx.fillText(s, -w / 2, yb); }
-    else if (sty === 'outline') { ctx.strokeStyle = COL.amber; ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.strokeText(s, -w / 2, yb); }
-    else { ctx.fillStyle = sty === 'red' ? COL.stop : COL.amber; ctx.fillText(s, -w / 2, yb); }
+    if (sty === 'block') { ctx.fillStyle = COL.acc; ctx.fillRect(-w / 2 - 40, yb - size * 0.86, w + 80, size * 1.02); ctx.fillStyle = COL.ink; ctx.fillText(s, -w / 2, yb); }
+    else if (sty === 'outline') { ctx.strokeStyle = COL.acc; ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.strokeText(s, -w / 2, yb); }
+    else { ctx.fillStyle = sty === 'red' ? COL.stop : COL.acc; ctx.fillText(s, -w / 2, yb); }
     if (sty === 'struck') {
       ctx.fillStyle = COL.stop; ctx.fillRect(-w / 2 - 30, yb - size * 0.36, (w + 60) * E.outExpo(clamp(u * 3)), 16);
       text(ctx, 'RETIRED 06.04.26 — FINRA 4210', w / 2, yb + 64, { fam: 'mc', wt: 700, size: 22, track: 0.24, col: COL.stop, align: 1 });
@@ -782,10 +782,10 @@ function drawS7(ctx, t) {
   ctx.translate(CX, 620); ctx.scale(cam, cam); ctx.translate(-CX, -620);
   // future route (faint), travelled route (lit)
   ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.strokeStyle = rgba(COL.amber, 0.2 * P(t, 12.5, 12.7)); ctx.lineWidth = 3; ctx.setLineDash([2, 12]);
+  ctx.strokeStyle = rgba(COL.acc, 0.2 * P(t, 12.5, 12.7)); ctx.lineWidth = 3; ctx.setLineDash([2, 12]);
   polyPath(ctx, S7.route, S7.L, 0, S7.L[S7.L.length - 1]); ctx.stroke(); ctx.setLineDash([]);
   const hd = s7Head(t);
-  ctx.strokeStyle = COL.amber; ctx.lineWidth = 9; polyPath(ctx, S7.route, S7.L, 0, hd); ctx.stroke();
+  ctx.strokeStyle = COL.acc; ctx.lineWidth = 9; polyPath(ctx, S7.route, S7.L, 0, hd); ctx.stroke();
   ctx.strokeStyle = rgba(COL.hot, 0.7); ctx.lineWidth = 2.5; ctx.stroke();
   ctx.restore();
   // stations
@@ -795,11 +795,11 @@ function drawS7(ctx, t) {
     ctx.save();
     if (reached) { const ru = inv(0, 0.45, u); if (ru < 1) { ctx.strokeStyle = rgba(COL.hot, 0.7 * (1 - ru)); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 18 + 50 * E.outCubic(ru), 0, TAU); ctx.stroke(); } }
     ctx.fillStyle = COL.ink; ctx.beginPath(); ctx.arc(x, y, 17, 0, TAU); ctx.fill();
-    ctx.strokeStyle = reached ? COL.amber : rgba(COL.amber, 0.4 * P(t, 12.5, 12.7)); ctx.lineWidth = 4; ctx.stroke();
+    ctx.strokeStyle = reached ? COL.acc : rgba(COL.acc, 0.4 * P(t, 12.5, 12.7)); ctx.lineWidth = 4; ctx.stroke();
     if (reached) { dot(ctx, 'hot', x, y, 8 * pop); }
     const lab = String(k + 1).padStart(2, '0'), la = reached ? clamp(pop) : 0.3 * P(t, 12.5, 12.7);
     ctx.translate(x, y - 44); const s = reached ? 0.6 + 0.4 * pop : 1; ctx.scale(s, s);
-    text(ctx, lab, 0, 0, { fam: 'mc', wt: 700, size: 26, track: 0.1, align: 0.5, alpha: la, col: reached ? COL.hot : COL.amber });
+    text(ctx, lab, 0, 0, { fam: 'mc', wt: 700, size: 26, track: 0.1, align: 0.5, alpha: la, col: reached ? COL.hot : COL.acc });
     ctx.restore();
   });
   // head
@@ -809,7 +809,7 @@ function drawS7(ctx, t) {
     const [nx, ny] = S7.nodes[S7.bm], u = t - 13.72, drop = spring(u, 2.6, 0.38);
     const y = lerp(ny - 760, ny - 78, drop);
     ctx.save(); ctx.translate(nx, y);
-    ctx.fillStyle = COL.amber; ctx.beginPath(); ctx.moveTo(-22, -92); ctx.lineTo(22, -92); ctx.lineTo(22, 0); ctx.lineTo(0, -16); ctx.lineTo(-22, 0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = COL.acc; ctx.beginPath(); ctx.moveTo(-22, -92); ctx.lineTo(22, -92); ctx.lineTo(22, 0); ctx.lineTo(0, -16); ctx.lineTo(-22, 0); ctx.closePath(); ctx.fill();
     ctx.fillStyle = COL.ink; font(ctx, 'mc', 800, 13, 0.1); ctx.save(); ctx.translate(5, -84); ctx.rotate(Math.PI / 2); ctx.fillText('SAVED', 0, 0); ctx.restore();
     ctx.restore();
   }
@@ -852,26 +852,26 @@ function drawS8(ctx, t) {
   // frame
   const fd = part(2), ff = fd == null ? 0 : E.inQuad(clamp((fd - 0.05) / 0.4));
   ctx.save(); ctx.globalAlpha *= 1 - ff; ctx.translate(0, ff * 300);
-  rrect(ctx, C.x, C.y, C.w, C.h, 16); ctx.fillStyle = rgba(COL.amber, 0.04); ctx.fill(); ctx.strokeStyle = COL.amber; ctx.lineWidth = 2; ctx.stroke();
+  rrect(ctx, C.x, C.y, C.w, C.h, 16); ctx.fillStyle = rgba(COL.acc, 0.04); ctx.fill(); ctx.strokeStyle = COL.acc; ctx.lineWidth = 2; ctx.stroke();
   text(ctx, 'CREATE ACCOUNT', fx, C.y + 70, { fam: 'mc', wt: 800, size: 24, track: 0.22 });
   text(ctx, 'STEP 1 OF 3', fx + fw, C.y + 70, { fam: 'mc', wt: 600, size: 18, track: 0.2, align: 1, alpha: 0.6 });
-  ctx.fillStyle = rgba(COL.amber, 0.3); ctx.fillRect(fx, C.y + 96, fw, 1.5);
+  ctx.fillStyle = rgba(COL.acc, 0.3); ctx.fillRect(fx, C.y + 96, fw, 1.5);
   ctx.restore();
   group(1, () => {
     text(ctx, 'EMAIL', fx, C.y + 160, { fam: 'mc', wt: 700, size: 18, track: 0.3, alpha: 0.75 });
-    rrect(ctx, fx, C.y + 176, fw, 74, 8); ctx.strokeStyle = rgba(COL.amber, 0.7); ctx.lineWidth = 2; ctx.stroke();
-    const v = typed('you@example.com', t, 14.62, 55); font(ctx, 'mn', 400, 28, 0); ctx.fillStyle = COL.amber; ctx.fillText(v, fx + 22, C.y + 224);
+    rrect(ctx, fx, C.y + 176, fw, 74, 8); ctx.strokeStyle = rgba(COL.acc, 0.7); ctx.lineWidth = 2; ctx.stroke();
+    const v = typed('you@example.com', t, 14.62, 55); font(ctx, 'mn', 400, 28, 0); ctx.fillStyle = COL.acc; ctx.fillText(v, fx + 22, C.y + 224);
     if (t < 14.9 && cursorOn(t * 2)) ctx.fillRect(fx + 26 + ctx.measureText(v).width, C.y + 198, 3, 32);
   }, C.y + 213);
   group(0, () => {
     text(ctx, 'PASSWORD', fx, C.y + 300, { fam: 'mc', wt: 700, size: 18, track: 0.3, alpha: 0.75 });
-    rrect(ctx, fx, C.y + 316, fw, 74, 8); ctx.strokeStyle = rgba(COL.amber, 0.7); ctx.lineWidth = 2; ctx.stroke();
-    const v = typed('••••••••••', t, 14.9, 70); font(ctx, 'mn', 700, 28, 0.1); ctx.fillStyle = COL.amber; ctx.fillText(v, fx + 22, C.y + 364);
+    rrect(ctx, fx, C.y + 316, fw, 74, 8); ctx.strokeStyle = rgba(COL.acc, 0.7); ctx.lineWidth = 2; ctx.stroke();
+    const v = typed('••••••••••', t, 14.9, 70); font(ctx, 'mn', 700, 28, 0.1); ctx.fillStyle = COL.acc; ctx.fillText(v, fx + 22, C.y + 364);
   }, C.y + 353);
   group(2, () => {
-    ctx.strokeStyle = rgba(COL.amber, 0.7); ctx.lineWidth = 2; ctx.strokeRect(fx, C.y + 424, 22, 22);
+    ctx.strokeStyle = rgba(COL.acc, 0.7); ctx.lineWidth = 2; ctx.strokeRect(fx, C.y + 424, 22, 22);
     text(ctx, 'SEND ME MARKETING EMAILS', fx + 38, C.y + 442, { fam: 'mc', wt: 600, size: 17, track: 0.16, alpha: 0.7 });
-    rrect(ctx, fx, C.y + 482, fw, 82, 10); ctx.fillStyle = COL.amber; ctx.fill();
+    rrect(ctx, fx, C.y + 482, fw, 82, 10); ctx.fillStyle = COL.acc; ctx.fill();
     text(ctx, 'START FREE TRIAL', fx + fw / 2, C.y + 533, { fam: 'mc', wt: 800, size: 26, track: 0.18, align: 0.5, col: COL.ink });
     text(ctx, 'CARD REQUIRED · CANCEL ANYTIME', fx + fw / 2, C.y + 606, { fam: 'mc', wt: 600, size: 15, track: 0.2, align: 0.5, alpha: 0.5 });
   }, C.y + 523);
@@ -880,7 +880,7 @@ function drawS8(ctx, t) {
   S8.words.forEach((w, i) => {
     const t0 = S8.hits[i]; if (t < t0) return;
     ctx.save(); ctx.translate(sh.x * 0.5, sh.y * 0.5);
-    riseText(ctx, w, M - 4, 400 + i * 180, t, t0, { size: 170, stagger: 0.012, dur: 0.2, col: i === 2 ? COL.hot : COL.amber });
+    riseText(ctx, w, M - 4, 400 + i * 180, t, t0, { size: 170, stagger: 0.012, dur: 0.2, col: i === 2 ? COL.hot : COL.acc });
     ctx.restore();
   });
 }
@@ -905,19 +905,19 @@ function drawS9(ctx, t) {
   if (s > 0.001) {
     const f1 = E.outExpo(inv(16.5, 16.7, t)), sc1 = lerp(1.14, 1, f1);
     ctx.save(); ctx.translate(CX, S9.y1); ctx.scale(sc1, sc1);
-    font(ctx, 'bs', 900, S9.fs, 0); ctx.fillStyle = COL.amber; ctx.fillText('FREE.', -tw(ctx, 'FREE.') / 2, 0); ctx.restore();
+    font(ctx, 'bs', 900, S9.fs, 0); ctx.fillStyle = COL.acc; ctx.fillText('FREE.', -tw(ctx, 'FREE.') / 2, 0); ctx.restore();
     if (t >= 16.75) {
       const f2 = E.outExpo(inv(16.75, 16.95, t)), sc2 = lerp(1.14, 1, f2);
       ctx.save(); ctx.translate(CX, S9.y2); ctx.scale(sc2, sc2);
-      font(ctx, 'bs', 900, S9.as, 0); ctx.strokeStyle = COL.amber; ctx.lineWidth = 5; ctx.lineJoin = 'round'; ctx.strokeText('ALWAYS.', -tw(ctx, 'ALWAYS.') / 2, 0); ctx.restore();
+      font(ctx, 'bs', 900, S9.as, 0); ctx.strokeStyle = COL.acc; ctx.lineWidth = 5; ctx.lineJoin = 'round'; ctx.strokeText('ALWAYS.', -tw(ctx, 'ALWAYS.') / 2, 0); ctx.restore();
     }
   }
   ctx.restore();
   // the last cursor, rung by the closing bell
   if (t >= 17.3) {
     const a = P(t, 17.3, 17.42, E.outCubic), bp = bellPulse(t, S9.bells);
-    for (const b of S9.bells) { const u = inv(b, b + 0.7, t); if (u <= 0 || u >= 1) continue; ctx.strokeStyle = rgba(COL.amber, 0.3 * (1 - u)); ctx.lineWidth = 1.5 + 4 * (1 - u); ctx.beginPath(); ctx.arc(CX, CY, 30 + E.outCubic(u) * 900, 0, TAU); ctx.stroke(); }
-    ctx.fillStyle = mixc(COL.amber, COL.hot, Math.min(1, bp), a);
+    for (const b of S9.bells) { const u = inv(b, b + 0.7, t); if (u <= 0 || u >= 1) continue; ctx.strokeStyle = rgba(COL.acc, 0.3 * (1 - u)); ctx.lineWidth = 1.5 + 4 * (1 - u); ctx.beginPath(); ctx.arc(CX, CY, 30 + E.outCubic(u) * 900, 0, TAU); ctx.stroke(); }
+    ctx.fillStyle = mixc(COL.acc, COL.hot, Math.min(1, bp), a);
     const sc = 1 + 0.25 * Math.min(1, bp);
     ctx.fillRect(CX - 11 * sc, CY - 20 * sc, 22 * sc, 40 * sc);
   }
@@ -939,7 +939,7 @@ function wordmark(ctx, t, withMask) {
   font(ctx, 'bs', 800, size, 0.02); const ww = tw(ctx, word), xs = xsFor(ctx, word), x0 = CX - ww / 2, yb = ry - 40;
   for (let i = 0; i < word.length; i++) {
     const t0 = 18.1 + Math.abs(i - 7.5) * 0.012, u = E.snap(inv(t0, t0 + 0.42, t)); if (u <= 0) continue;
-    ctx.fillStyle = COL.amber; ctx.fillText(word[i], x0 + xs[i], yb + (1 - u) * (size + 30));
+    ctx.fillStyle = COL.acc; ctx.fillText(word[i], x0 + xs[i], yb + (1 - u) * (size + 30));
   }
   // the I of TRADING grows wicks: the letter is a candle
   const wk = E.snap(inv(18.56, 18.7, t));
@@ -947,7 +947,7 @@ function wordmark(ctx, t, withMask) {
     const iI = word.indexOf('I'), m = ctx.measureText('I');
     const l = x0 + xs[iI] - m.actualBoundingBoxLeft, r = x0 + xs[iI] + m.actualBoundingBoxRight, cx = (l + r) / 2, ww2 = Math.max(4, (r - l) * 0.16);
     const top = yb - m.actualBoundingBoxAscent;
-    ctx.fillStyle = COL.amber;
+    ctx.fillStyle = COL.acc;
     ctx.fillRect(cx - ww2 / 2, top - 40 * wk, ww2, 40 * wk);
     ctx.fillRect(cx - ww2 / 2, yb, ww2, 28 * wk);
   }
@@ -958,7 +958,7 @@ function drawS10(ctx, t) {
   ctx.save(); ctx.translate(CX + sh.x, CY + sh.y); ctx.scale(push, push); ctx.translate(-CX, -CY);
   const rw = lerp(22, 1320, E.snap(inv(18.0, 18.36, t)));
   { const u = inv(18.0, 18.6, t); if (u < 1) { ctx.strokeStyle = rgba(COL.hot, 0.4 * (1 - u)); ctx.lineWidth = 2 + 8 * (1 - u); ctx.beginPath(); ctx.arc(CX, ry, 20 + E.outExpo(u) * 1200, 0, TAU); ctx.stroke(); } }
-  ctx.fillStyle = COL.amber; ctx.fillRect(CX - rw / 2, ry - 2, rw, 4);
+  ctx.fillStyle = COL.acc; ctx.fillRect(CX - rw / 2, ry - 2, rw, 4);
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, ry - 6); ctx.clip();
   wordmark(ctx, t);
   ctx.restore();
@@ -969,7 +969,7 @@ function drawS10(ctx, t) {
     g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'copy'; g.drawImage(S10.mask, 0, 0);
     g.globalCompositeOperation = 'source-in';
     const gr = g.createLinearGradient(sx - 140, 0, sx + 140, 0);
-    gr.addColorStop(0, 'rgba(255,240,210,0)'); gr.addColorStop(0.5, 'rgba(255,240,210,0.85)'); gr.addColorStop(1, 'rgba(255,240,210,0)');
+    gr.addColorStop(0, 'rgba(216,248,248,0)'); gr.addColorStop(0.5, 'rgba(216,248,248,0.85)'); gr.addColorStop(1, 'rgba(216,248,248,0)');
     g.fillStyle = gr; g.fillRect(0, 0, W, H);
     ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(S10.sheen, 0, 0); ctx.restore();
   }
@@ -980,10 +980,10 @@ function drawS10(ctx, t) {
   if (t >= 18.42) {
     const s = '> thetradingdesk.org', vis = typed(s, t, 18.42, 55);
     font(ctx, 'mn', 500, 48, 0.02); const w = tw(ctx, s), x0 = CX - w / 2 - 14, y = ry + 196;
-    ctx.fillStyle = rgba(COL.amber, 0.55); ctx.fillText(vis.slice(0, 2), x0, y);
+    ctx.fillStyle = rgba(COL.acc, 0.55); ctx.fillText(vis.slice(0, 2), x0, y);
     ctx.fillStyle = COL.hot; ctx.fillText(vis.slice(2), x0 + ctx.measureText('> ').width, y);
     const vw = ctx.measureText(vis).width;
-    if (vis.length < s.length || cursorOn(t)) { ctx.fillStyle = COL.amber; ctx.fillRect(x0 + vw + 8, y - 37, 27, 48); }
+    if (vis.length < s.length || cursorOn(t)) { ctx.fillStyle = COL.acc; ctx.fillRect(x0 + vw + 8, y - 37, 27, 48); }
   }
   text(ctx, 'FREE, ALWAYS  \u00B7  NO LOGIN  \u00B7  OPTIONAL 1:1 SESSIONS', CX, 934, { fam: 'mc', wt: 600, size: 19, track: 0.3, align: 0.5, alpha: 0.6 * P(t, 18.8, 19.2, E.outCubic) });
   ctx.restore();
@@ -993,7 +993,7 @@ function drawS10(ctx, t) {
 const CODES = [[0, 'PRE'], [2.0, 'OPEN'], [3.75, 'PTRN'], [6.0, 'OPTN'], [8.0, 'RISK'], [10.5, 'GLOS'], [12.5, 'PATH'], [14.5, 'LOGIN'], [16.5, 'FREE'], [17.5, 'CLOSE']];
 function drawChrome(ctx, t) {
   const a = P(t, 1.98, 2.3, E.outCubic); if (a <= 0) return;
-  const paper = t >= 8.0 && t < 10.5, col = paper ? COL.print : COL.amber;
+  const paper = t >= 8.0 && t < 10.5, col = paper ? COL.print : COL.acc;
   ctx.save(); ctx.globalAlpha = a;
   ctx.strokeStyle = rgba(col, 0.55); ctx.lineWidth = 2;
   const m = 40, L = 22;
@@ -1059,20 +1059,28 @@ function postParams(t) {
 
 // ══ assemble ══════════════════════════════════════════════════════════════
 function buildAll(ctx) {
-  makeDot('lit', COL.amber, COL.amber, 0.2, 1);
-  makeDot('hot', '#FFF3DD', COL.amber, 0.35, 1);
-  { const S = 128, c = mkCanvas(S, S), g = c.getContext('2d'), r = S / 2, rr = r * 0.42;
+  for (const [nm, c] of Object.entries(PAL)) {
+    const sx = nm === 'cyan' ? '' : '_' + nm;
+    makeDot('lit' + sx, c, c, 0.2, 1);
+    makeDot('hot' + sx, mixc(c, '#FFFFFF', 0.85), c, 0.35, 1);
+  }
+  for (const [nm, col] of Object.entries(PAL)) {
+    const S = 128, c = mkCanvas(S, S), g = c.getContext('2d'), r = S / 2, rr = r * 0.42;
     const gr = g.createRadialGradient(r, r, 0, r, r, rr);
-    gr.addColorStop(0, rgba(COL.amber, 0.05)); gr.addColorStop(0.78, rgba(COL.amber, 0.09)); gr.addColorStop(0.94, rgba(COL.amber, 0.17)); gr.addColorStop(1, rgba(COL.amber, 0));
-    g.fillStyle = gr; g.beginPath(); g.arc(r, r, rr, 0, TAU); g.fill(); SPR.off = c; }
+    gr.addColorStop(0, rgba(col, 0.05)); gr.addColorStop(0.78, rgba(col, 0.09)); gr.addColorStop(0.94, rgba(col, 0.17)); gr.addColorStop(1, rgba(col, 0));
+    g.fillStyle = gr; g.beginPath(); g.arc(r, r, rr, 0, TAU); g.fill(); SPR['off' + (nm === 'cyan' ? '' : '_' + nm)] = c;
+  }
   buildS1(); buildS3(); buildS2(ctx); buildS4(); buildS5(ctx); buildS6(ctx); buildS7(); buildS8(); buildS9(ctx); buildS10();
   CUES.sort((a, b) => a.t - b.t);
 }
 function drawScene(ctx, t) {
   ctx.fillStyle = COL.ink; ctx.fillRect(0, 0, W, H);
+  const bg = ctx.createRadialGradient(CX, CY * 0.8, 0, CX, CY * 0.8, W * 0.62);
+  bg.addColorStop(0, rgba(COL.glow, 0.95)); bg.addColorStop(1, rgba(COL.glow, 0));
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
   const ga = P(t, 2.0, 2.6, E.outCubic) * (1 - P(t, 17.1, 17.4, E.lin)) + P(t, 18.2, 19.0, E.outCubic) * 0.7;
   bgGrid(ctx, t, ga, -t * 12, 0);
-  drawS1(ctx, t); drawS2(ctx, t); drawS3(ctx, t); drawS4(ctx, t); drawS5(ctx, t);
-  drawS6(ctx, t); drawS7(ctx, t); drawS8(ctx, t); drawS9(ctx, t); drawS10(ctx, t);
+  drawS1(ctx, t); drawS2(ctx, t); withAcc('green', () => drawS3(ctx, t)); drawS4(ctx, t); drawS5(ctx, t);
+  withAcc('gold', () => drawS6(ctx, t)); drawS7(ctx, t); drawS8(ctx, t); drawS9(ctx, t); drawS10(ctx, t);
   drawChrome(ctx, t);
 }

@@ -22,21 +22,19 @@ Reading the tape was the old craft of learning a market by watching its stream o
 
 Nothing is decorative. Every mark has to earn its place and every cut lands on the beat. The standard is meticulous, frame-by-frame craft, with each easing curve hand-tuned. Nothing should look like a template.
 
-## Material palette
+## Palette (matched to thetradingdesk.org)
 
-These colours come from the terminal and the tape, not from a trend.
+Sampled from the live site. Each section wears the colour the site gives that instrument.
 
-| Token | Hex | Source |
+| Token | Hex | Use |
 | --- | --- | --- |
-| `INK` | `#0B0A08` | a powered CRT, warm and never true black |
-| `AMBER` | `#FF9F1C` | amber phosphor, the colour everything "prints" in |
-| `HOT` | `#FFD9A0` | the white-hot core of a lit LED or phosphor bloom |
-| `DIM` | amber @ 10–25% | grids, unlit LEDs, rules |
-| `PAPER` | `#ECE4D2` | ticker tape and order-ticket stock |
-| `PRINT` | `#16130F` | ink on paper |
-| `STOP` | `#FF3B2F` | the only alarm colour: stops, traps, strike-throughs |
-
-Candles stay monochrome amber, as on a phosphor terminal: **lit (filled) = up, outline = down**. That keeps red free to mean one thing only, *danger*.
+| `INK` | `#070D12` | background, with a `#0F2F36` teal glow like the site hero |
+| `CYAN` | `#22D0E8` | brand colour: chrome, type, options, the path, sign-off |
+| `GREEN` | `#30D098` | candlesticks / patterns (up candles) |
+| `GOLD` | `#F0B840` | encyclopedia / vocabulary |
+| `PINK` | `#F8608C` | down candles, stops, traps, strike-throughs |
+| `HOT` | `#D8F8F8` | neon cores and highlights |
+| `PAPER` / `PRINT` | `#E8ECF0` / `#070D12` | the single light "risk" scene |
 
 ## Type
 

@@ -6,10 +6,17 @@ const BEAT = 0.5, N8 = 0.25, N16 = 0.125;          // 120 BPM
 const M = 120;                                      // safe margin
 const TAU = Math.PI * 2;
 
+// thetradingdesk.org palette (sampled from the live site)
+const PAL = { cyan: '#22D0E8', green: '#30D098', gold: '#F0B840', pink: '#F8608C' };
 const COL = {
-  ink: '#0B0A08', amber: '#FF9F1C', hot: '#FFD9A0', paper: '#ECE4D2',
-  print: '#16130F', stop: '#FF3B2F', flap: '#1C1915',
+  ink: '#070D12', glow: '#0F2F36', acc: PAL.cyan, hot: '#D8F8F8', paper: '#E8ECF0',
+  print: '#070D12', stop: PAL.pink, up: PAL.green, flap: '#0D1117', sfx: '',
 };
+// run fn with a section accent (the site colour-codes its instruments)
+function withAcc(name, fn) {
+  const a = COL.acc, s = COL.sfx; COL.acc = PAL[name]; COL.sfx = name === 'cyan' ? '' : '_' + name;
+  try { fn(); } finally { COL.acc = a; COL.sfx = s; }
+}
 
 // ── Math ──────────────────────────────────────────────────────────────────
 const clamp = (x, a = 0, b = 1) => (x < a ? a : x > b ? b : x);
@@ -128,7 +135,7 @@ function charXs(ctx, s) {
 function text(ctx, s, x, y, o = {}) {
   font(ctx, o.fam || 'mn', o.wt || 400, o.size || 30, o.track || 0);
   const w = tw(ctx, s);
-  ctx.fillStyle = o.col || COL.amber;
+  ctx.fillStyle = o.col || COL.acc;
   const a0 = ctx.globalAlpha; if (o.alpha != null) ctx.globalAlpha = a0 * o.alpha;
   ctx.fillText(s, x - w * (o.align || 0), y);
   ctx.globalAlpha = a0;
@@ -147,7 +154,7 @@ function riseText(ctx, s, x, y, t, t0, o = {}) {
   const top = y - size * 0.95, bot = y + size * (o.clipBelow ?? 0.12);
   ctx.save();
   ctx.beginPath(); ctx.rect(x0 - size, top, w + size * 2, bot - top); ctx.clip();
-  ctx.fillStyle = o.col || COL.amber;
+  ctx.fillStyle = o.col || COL.acc;
   for (let i = 0; i < s.length; i++) {
     const p = ease(inv(t0 + i * stag, t0 + i * stag + dur, t));
     if (p <= 0) continue;
@@ -188,14 +195,14 @@ function makeDot(name, core, edge, glowA, rel = 1) {
 function dot(ctx, name, x, y, rad, a = 1) {
   const s = rad / 0.42 * 2;
   const a0 = ctx.globalAlpha; ctx.globalAlpha = a0 * a;
-  ctx.drawImage(SPR[name], x - s / 2, y - s / 2, s, s);
+  ctx.drawImage(SPR[name + COL.sfx] || SPR[name], x - s / 2, y - s / 2, s, s);
   ctx.globalAlpha = a0;
 }
 
 // chart crosshair with axis read-outs (the film's cursor)
 function crosshair(ctx, x, y, o = {}) {
   const a = o.alpha ?? 1; if (a <= 0.001) return;
-  const col = o.col || COL.amber, ink = o.ink || COL.ink, g = o.gap ?? 16;
+  const col = o.col || COL.acc, ink = o.ink || COL.ink, g = o.gap ?? 16;
   const x0 = o.x0 ?? 0, x1 = o.x1 ?? W, y0 = o.y0 ?? 0, y1 = o.y1 ?? H;
   ctx.save(); ctx.globalAlpha *= a;
   ctx.strokeStyle = rgba(col, 0.6); ctx.lineWidth = 1.5; ctx.setLineDash([5, 7]);
