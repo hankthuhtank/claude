@@ -1,0 +1,21 @@
+{
+  "name": "thetradingdesk-reel",
+  "version": "1.0.0",
+  "description": "The Trading Desk: \"Open to Close\", a 20s motion reel rendered in code",
+  "scripts": {
+    "render": "node render.cjs --scale 1 --sub 8 --workers 3 --out frames --cues cues.json",
+    "preview": "node render.cjs --scale 0.5 --sub 1 --step 30 --out scratch/preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@fontsource-variable/big-shoulders": "^5.3.0",
+    "@fontsource-variable/doto": "^5.3.0",
+    "@fontsource-variable/martian-mono": "^5.3.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.56.1"
+  },
+  "private": true
+}
