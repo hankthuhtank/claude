@@ -4,7 +4,7 @@ A 20-second motion reel for [thetradingdesk.org](https://thetradingdesk.org). It
 
 | File | Use |
 | --- | --- |
-| `out/thetradingdesk-reel-1080p60.mp4` | Master. 1920×1080, 60 fps, H.264 High (about 14 Mbps), AAC 320k, −13 LUFS / −1 dBTP |
+| `out/thetradingdesk-reel-1080p60.mp4` | Master. 1920×1080, 60 fps, H.264 High (about 11 Mbps), AAC 320k, −13 LUFS / −1 dBTP |
 | `out/thetradingdesk-reel-web.mp4` | Lighter encode (about 9.6 MB) for embedding on the site |
 | `out/poster-title.png`, `out/poster-endcard.png` | Cover and thumbnail stills |
 
