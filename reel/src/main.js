@@ -17,6 +17,10 @@ const POST = { grain: [], vig: null, scan: null };
 async function loadFonts() {
   const list = [['BS', 'fonts/BigShoulders-opsz72.woff2'], ['MMc', 'fonts/MartianMono-cond.woff2'], ['MMn', 'fonts/MartianMono-norm.woff2'], ['MMw', 'fonts/MartianMono-wide.woff2'], ['DOTO', 'fonts/Doto-round.woff2']];
   for (const [n, u] of list) { const f = new FontFace(n, `url(${u})`, { weight: '100 900' }); await f.load(); document.fonts.add(f); }
+  if (V) for (const w of [300, 400, 500, 600, 700]) for (const [n, f] of [['CP', 'ChakraPetch'], ['PM', 'IBMPlexMono']]) {
+    const ff = new FontFace(n, `url(fonts/${f}-${w}.woff2)`, { weight: String(w) }); await ff.load(); document.fonts.add(ff);
+  }
+  window.LOGO = new Image(); LOGO.src = 'assets/logo.png'; await LOGO.decode();
 }
 function buildPost() {
   for (let k = 0; k < 6; k++) {

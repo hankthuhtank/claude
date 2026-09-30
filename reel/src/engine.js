@@ -1,16 +1,19 @@
 'use strict';
 // ── Frame, tempo, grid ────────────────────────────────────────────────────
-const W = 1920, H = 1080, CX = W / 2, CY = H / 2;
+// ?v=1 renders the 1080×1920 vertical (TikTok / Reels) cut
+const V = typeof location !== 'undefined' && new URLSearchParams(location.search).get('v') === '1';
+const W = V ? 1080 : 1920, H = V ? 1920 : 1080, CX = W / 2, CY = H / 2;
 const FPS = 60, DUR = 20, NF = FPS * DUR;
 const BEAT = 0.5, N8 = 0.25, N16 = 0.125;          // 120 BPM
-const M = 120;                                      // safe margin
+const M = V ? 72 : 120;                             // safe margin
 const TAU = Math.PI * 2;
 
 // thetradingdesk.org palette (sampled from the live site)
-const PAL = { cyan: '#22D0E8', green: '#30D098', gold: '#F0B840', pink: '#F8608C' };
+const PAL = V ? { cyan: '#22D3EE', green: '#34D399', gold: '#F5B942', pink: '#F87171' }   // exact site CSS vars
+            : { cyan: '#22D0E8', green: '#30D098', gold: '#F0B840', pink: '#F8608C' };
 const COL = {
-  ink: '#070D12', glow: '#0F2F36', acc: PAL.cyan, hot: '#D8F8F8', paper: '#E8ECF0',
-  print: '#070D12', stop: PAL.pink, up: PAL.green, flap: '#0D1117', sfx: '',
+  ink: V ? '#070A0F' : '#070D12', glow: '#0F2F36', acc: PAL.cyan, hot: '#D8F8F8', paper: '#E8ECF0',
+  print: '#070D12', stop: PAL.pink, up: PAL.green, flap: '#0D1117', sfx: '', text: '#E8EEF7',
 };
 // run fn with a section accent (the site colour-codes its instruments)
 function withAcc(name, fn) {
@@ -113,8 +116,11 @@ function shake(t) {
 
 // ── Canvas helpers ────────────────────────────────────────────────────────
 function mkCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
-const FF = { bs: 'BS', mc: 'MMc', mn: 'MMn', mw: 'MMw', dot: 'DOTO' };
+// vertical cut uses the site's own faces: Chakra Petch (display) + IBM Plex Mono (terminal)
+const FF = V ? { bs: 'CP', mc: 'PM', mn: 'PM', mw: 'PM', dot: 'DOTO' } : { bs: 'BS', mc: 'MMc', mn: 'MMn', mw: 'MMw', dot: 'DOTO' };
 function font(ctx, fam, wt, size, track = 0) {
+  if (V && size < 40 && fam !== 'dot') size = Math.round(size * 1.45);   // phone-legible small type
+  if (V && fam === 'bs') wt = Math.min(700, Math.max(300, wt));
   ctx.font = `${wt} ${size}px ${FF[fam]}`;
   ctx.letterSpacing = `${(track * size).toFixed(2)}px`;
   ctx.textBaseline = 'alphabetic';

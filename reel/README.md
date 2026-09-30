@@ -31,3 +31,13 @@ ffmpeg -framerate 60 -i frames/f%04d.png -i audio/score.wav -map 0:v -map 1:a \
 ```
 
 For a quick preview, use `node render.cjs --scale 0.5 --sub 1 --frames 120,240,480 --out scratch/p`, then `python3 tools/contact.py scratch/p sheet.png`.
+
+## Vertical cut (TikTok / Reels)
+
+`out/thetradingdesk-tiktok-1080x1920.mp4` is a 1080×1920, 60 fps H.264 file. It is built from `src/scenes-v.js` and rendered with `node render.cjs --vertical`.
+
+It differs from the widescreen master in these ways:
+
+- **Brand:** your exact colours, Chakra Petch and IBM Plex Mono, and the real logo (`src/assets/logo.png`) lit like a neon sign at the end.
+- **Content:** your six instruments and the site's real counts.
+- **Layout:** type is kept clear of the TikTok/Reels UI: the tabs at the top, the buttons on the right and the caption at the bottom.
